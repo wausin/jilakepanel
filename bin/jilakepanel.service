@@ -1,0 +1,16 @@
+[Unit]
+Description=JilakePanel
+After=network.target nginx.service php8.3-fpm.service mariadb.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/jilakepanel.env
+WorkingDirectory=/opt/jilakepanel
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+User=root
+# panel must run as root for useradd/nginx/certbot ops
+# ponytail: dedicated non-root role + sudo allowlist is the upgrade path
+
+[Install]
+WantedBy=multi-user.target
