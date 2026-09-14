@@ -134,6 +134,13 @@ test('validation: bad domain 400, missing phpVersion 400, duplicate 409', async 
     method: 'POST', body: JSON.stringify({ domain: 'b.example.com', type: 'static', siteUser: 'example', password: 'sup3rsecret' }),
   });
   assert.equal(dupUser.status, 409);
+  for (const reserved of ['root', 'www-data', 'admin', 'backup']) {
+    const r = await api('/api/sites', {
+      method: 'POST', body: JSON.stringify({ domain: `${reserved}.example.com`, type: 'static', siteUser: reserved, password: 'sup3rsecret' }),
+    });
+    assert.equal(r.status, 400, `reserved user ${reserved} must be rejected`);
+    assert.equal(r.body.error, 'reserved system username');
+  }
   createUser(db, 'bob', 'sup3rsecret', 'editor');
   cookie = '';
   await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'bob', password: 'sup3rsecret' }) });

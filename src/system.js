@@ -36,9 +36,14 @@ export class System {
     await this.ok('certbot', args);
   }
   async publicIp() {
+    // cached 5 min: the TLS pre-flight calls this on every issue attempt
+    const now = Date.now();
+    if (this._ip && now - this._ipAt < 5 * 60 * 1000) return this._ip;
     const r = await this.exec('curl', ['-s', '--max-time', '10', 'https://api.ipify.org']);
     const ip = (r.stdout || '').trim();
-    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
+    this._ip = /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
+    this._ipAt = now;
+    return this._ip;
   }
   async setCrontabFile(name, lines) { this.writeFile(`/etc/cron.d/${name}`, lines.join('\n') + '\n'); }
   writeFile(p, content) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content); }

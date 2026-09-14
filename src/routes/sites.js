@@ -7,6 +7,8 @@ import { bad, logEvent, DOMAIN_RE, USER_RE, PHP_RE } from '../lib/util.js';
 const TYPES = ['php', 'node', 'static', 'proxy'];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const TARGET_RE = /^https?:\/\/[^\s]+$/;
+// never allow panel sites to claim these system users (chpasswd/userdel on them = disaster)
+const RESERVED_USERS = new Set(['root', 'admin', 'ubuntu', 'debian', 'www-data', 'nginx', 'mysql', 'mariadb', 'postgres', 'backup', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail', 'news', 'uucp', 'proxy', 'sshd', 'certbot', 'messagebus', 'systemd']);
 
 export default function sitesRouter({ db, system, config }) {
   const router = Router();
@@ -124,7 +126,7 @@ export default function sitesRouter({ db, system, config }) {
 <body>
 <div class="bg"></div><div class="grid-bg"></div>
 <div class="card">
-  <div class="mark"><svg width="26" height="26" viewBox="0 0 16 16" fill="none"><path d="M3 12.5 8 2.5l5 10" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 9.2h5.2" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
+  <div class="mark"><svg width="26" height="26" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="14" rx="4" fill="#2563eb"/><path d="M5.1 3.4v5.3a2.7 2.7 0 0 0 2.7 2.7h.4M9.9 3.4v8.3m0-8.3h1.2a2.35 2.35 0 0 1 0 4.7H9.9" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
   <div class="dom">${s.domain}</div>
   <h1>We&rsquo;re getting things ready</h1>
   <p>This site was just created and hasn&rsquo;t published any content yet. Once the owner uploads their files, this page will be replaced automatically.</p>
@@ -145,6 +147,15 @@ export default function sitesRouter({ db, system, config }) {
     let madeUser = false;
     try {
       madeUser = await system.ensureUser(site.site_user, password);
+      // race guard: the site may have been deleted while useradd ran
+      if (!db.prepare('SELECT 1 FROM sites WHERE id=?').get(site.id)) {
+        try {
+          if (madeUser) await system.removeUser(site.site_user);
+          if (site.type === 'php') await system.exec('rm', ['-f', poolPath(site)]);
+          await system.exec('rm', ['-f', confPath(site.domain), linkPath(site.domain)]);
+        } catch { /* best-effort */ }
+        return;
+      }
       await system.exec('mkdir', ['-p', site.docroot]);
       const idx = defaultIndex(site);
       system.writeFile(path.join(site.docroot, idx.file), idx.content);
@@ -181,6 +192,7 @@ export default function sitesRouter({ db, system, config }) {
     if (typeof domain !== 'string' || !DOMAIN_RE.test(domain)) return bad(res, 400, 'invalid domain');
     if (!TYPES.includes(type)) return bad(res, 400, 'invalid type');
     if (typeof siteUser !== 'string' || !USER_RE.test(siteUser)) return bad(res, 400, 'invalid siteUser');
+    if (RESERVED_USERS.has(siteUser)) return bad(res, 400, 'reserved system username');
     if (typeof password !== 'string' || password.length < 8) return bad(res, 400, 'password too short');
     if (type === 'php' && !PHP_RE.test(String(phpVersion ?? ''))) return bad(res, 400, 'invalid phpVersion');
     const port = appPort == null ? null : Number(appPort);

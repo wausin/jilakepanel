@@ -141,6 +141,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (empty && !baseConfig.adminUser) {
     console.log('no users; set JLP_ADMIN_USER + JLP_ADMIN_PASSWORD env to seed admin');
   }
+  // a crash/restart mid-create leaves sites stuck in 'creating' forever — reconcile on boot
+  try {
+    const r = app.locals.db.prepare(
+      "UPDATE sites SET status='error', status_msg='interrupted by panel restart' WHERE status='creating'"
+    ).run();
+    if (r.changes > 0) console.log(`reconciled ${r.changes} interrupted site job(s)`);
+  } catch { /* non-fatal */ }
   app.listen(app.locals.config.port, app.locals.config.host, () =>
     console.log(`jilakepanel on http://${app.locals.config.host}:${app.locals.config.port}`));
 }

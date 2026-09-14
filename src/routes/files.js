@@ -297,7 +297,8 @@ export default function filesRouter({ db, system, config }) {
       // ponytail: FakeSystem never runs tar, so out may not exist; listing/restore still validates by name.
       fs.rmSync(staging, { recursive: true, force: true });
       // ponytail: retention floor is 1 day (0/invalid -> 1); no "keep forever" knob yet.
-      const days = Math.max(1, Number(db.prepare("SELECT value FROM settings WHERE key='backupRetention'").get()?.value ?? 7));
+      const rn = Number(db.prepare("SELECT value FROM settings WHERE key='backupRetention'").get()?.value ?? 7);
+      const days = Number.isFinite(rn) && rn >= 1 ? rn : 1;
       const cutoff = Date.now() - days * 86400000;
       for (const f of fs.readdirSync(bdir)) {
         if (!BACKUP_RE.test(f)) continue;
@@ -342,6 +343,9 @@ export default function filesRouter({ db, system, config }) {
       if (m.startsWith('/') || m.startsWith('../') || m.includes('/../') || /^[A-Za-z]:/.test(m)) {
         return bad(res, 400, 'unsafe archive members');
       }
+      // GNU tar -tzf prints "name -> target" for symlinks: a symlink member can
+      // redirect later extraction outside home (runs as root).
+      if (m.includes(' -> ')) return bad(res, 400, 'archive contains symlinks (not supported)');
     }
     // ponytail: symlink members can still point outside home (name list shows no type info).
     // Upgrade path: extract to a staging dir, scan with real fs for symlinks, then rsync/cp into home.

@@ -19,7 +19,8 @@ if [ "$NEED_NODE" = 1 ]; then
 fi
 
 # panel supports other php-fpm versions too if installed manually (e.g. php8.2-fpm)
-apt-get install -y git nginx php8.3-fpm mariadb-server certbot python3-certbot-nginx
+apt-get update
+apt-get install -y git curl nginx php8.3-fpm mariadb-server certbot python3-certbot-nginx
 
 install -d -m 755 /etc/nginx/sites-available/jlp /var/log/jlp
 

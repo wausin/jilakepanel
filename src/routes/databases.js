@@ -194,7 +194,7 @@ export default function databasesRouter({ db, system, config }) {
     res.json({ columns: cols, rows: list, total, page });
   }, { readOnly: true });
 
-  const query = wrapDb(async (req, res, handle) => {
+  const query = wrapDb(async (req, res, handle, p) => {
     let sql = String(req.body?.sql ?? '').trim().replace(/;\s*$/, '');
     if (!sql) return bad(res, 400, 'empty sql');
     if (/\b(PRAGMA|ATTACH|DETACH|load_extension|VACUUM\s+INTO|INTO\s+OUTFILE)\b/i.test(sql)) {
@@ -204,13 +204,18 @@ export default function databasesRouter({ db, system, config }) {
     const isRead = /^(SELECT|WITH|EXPLAIN)/.test(head);
     if (!isRead && req.body?.confirm !== true) return bad(res, 400, 'confirm:true required for write statements');
     if (isRead) {
+      // Read path uses a read-only handle: CTE-wrapped writes (WITH ... INSERT)
+      // would otherwise execute with no confirm. SQLite enforces it here.
+      let ro = null;
       try {
-        const st = handle.prepare(sql);
+        ro = new DatabaseSync(p, { readOnly: true });
+        const st = ro.prepare(sql);
         const r = st.all();
         let columns = [];
         try { columns = st.columns().map(c => c.name); } catch {}
         return res.json({ results: [{ columns, rows: r.slice(0, 1000) }] });
       } catch (e) { return bad(res, 400, e.message); }
+      finally { try { ro?.close(); } catch {} }
     }
     try {
       handle.exec(sql);
@@ -305,6 +310,7 @@ export default function databasesRouter({ db, system, config }) {
   const mysqlDelete = async (req, res) => {
     const name = req.params.name;
     if (!/^[A-Za-z0-9_]{2,40}$/.test(String(name ?? ''))) return bad(res, 400, 'invalid db name');
+    if (MYSQL_SYS.has(name)) return bad(res, 403, 'system database');
     const meta = db.prepare('SELECT * FROM mysql_dbs WHERE name=?').get(name);
     const r = await system.exec('mysql', ['-e', `DROP DATABASE IF EXISTS \`${name}\`;`
       + (meta?.db_user ? ` DROP USER IF EXISTS '${meta.db_user}'@'localhost';` : '')]);
@@ -317,6 +323,7 @@ export default function databasesRouter({ db, system, config }) {
   const mysqlExport = async (req, res) => {
     const name = req.params.name;
     if (!/^[A-Za-z0-9_]{2,40}$/.test(String(name ?? ''))) return bad(res, 400, 'invalid db name');
+    if (MYSQL_SYS.has(name)) return bad(res, 403, 'system database');
     const r = await system.exec('mysqldump', ['--no-tablespaces', name]);
     if (r.code !== 0) return bad(res, 500, r.stderr || 'mysqldump failed');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -327,6 +334,7 @@ export default function databasesRouter({ db, system, config }) {
   const mysqlImport = async (req, res) => {
     const name = req.params.name;
     if (!/^[A-Za-z0-9_]{2,40}$/.test(String(name ?? ''))) return bad(res, 400, 'invalid db name');
+    if (MYSQL_SYS.has(name)) return bad(res, 403, 'system database');
     try {
       let sql;
       if (String(req.headers['content-type'] || '').startsWith('multipart/form-data')) {
@@ -379,10 +387,10 @@ export default function databasesRouter({ db, system, config }) {
   router.post('/sites/:id/sqlite', siteHome, create);
   router.all('/sites/:id/sqlite/*db', siteHome, dispatch);
 
-  router.get('/mysql/dbs', mysqlList);
+  router.get('/mysql/dbs', adminRequired, mysqlList);
   router.post('/mysql/dbs', adminRequired, mysqlCreate);
   router.delete('/mysql/dbs/:name', adminRequired, mysqlDelete);
-  router.get('/mysql/dbs/:name/export', mysqlExport);
+  router.get('/mysql/dbs/:name/export', adminRequired, mysqlExport);
   router.post('/mysql/dbs/:name/import', adminRequired, mysqlImport);
 
   return router;

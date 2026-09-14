@@ -131,6 +131,19 @@ test('query multi-statement read: node:sqlite prepares first stmt only', async (
   assert.equal(r.body.results.length, 1);
 });
 
+test('CTE-wrapped write bypasses no more: WITH...INSERT rejected on read path', async () => {
+  // regression: WITH x AS (...) INSERT ... was classified as a read and executed
+  // with no confirm. The read path now uses a read-only handle, so SQLite itself refuses.
+  const before = await api(`/api/sites/1/sqlite/${DB}/query`, { method: 'POST', body: JSON.stringify({ sql: 'SELECT COUNT(*) c FROM users' }) });
+  const sneak = await api(`/api/sites/1/sqlite/${DB}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ sql: "WITH x AS (SELECT 99) INSERT INTO users(name) SELECT 'sneaky' FROM x RETURNING id" }),
+  });
+  assert.equal(sneak.status, 400, 'CTE write must not run as a read');
+  const after = await api(`/api/sites/1/sqlite/${DB}/query`, { method: 'POST', body: JSON.stringify({ sql: 'SELECT COUNT(*) c FROM users' }) });
+  assert.equal(after.body.results[0].rows[0].c, before.body.results[0].rows[0].c, 'row count unchanged');
+});
+
 test('export', async () => {
   const r = await raw(`/api/sites/1/sqlite/${DB}/export`, { headers: { cookie } });
   assert.equal(r.status, 200);

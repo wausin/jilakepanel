@@ -65,19 +65,33 @@ function modal(title, body, opts) {
   opts = opts || {};
   return new Promise(resolve => {
     let done = false;
-    const onKey = e => { if (e.key === 'Escape') close(false); };
-    function close(v) { if (done) return; done = true; document.removeEventListener('keydown', onKey); backdrop.remove(); resolve(v); }
-    const box = h('div', { class: 'modal' + (opts.wide ? ' wide' : '') },
+    const onKey = e => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(false); return; }
+      if (e.key === 'Tab') { // focus trap
+        const foci = [...box.querySelectorAll('button, input, select, textarea, a[href]')].filter(x => !x.disabled);
+        if (!foci.length) return;
+        const first = foci[0], last = foci[foci.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      }
+    };
+    function close(v) { if (done) return; done = true; document.removeEventListener('keydown', onKey, true); backdrop.remove(); resolve(v); }
+    const box = h('div', { class: 'modal' + (opts.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       h('div', { class: 'mhead' }, h('h3', null, title), h('button', { class: 'x', 'aria-label': 'Close', onclick: () => close(false) }, '\u00d7')),
       h('div', { class: 'mbody' }, body),
       h('div', { class: 'mfoot' },
-        h('button', { onclick: () => close(false), 'data-testid': 'modal-cancel' }, opts.cancelText || 'Cancel'),
+        h('button', { class: 'btn', onclick: () => close(false), 'data-testid': 'modal-cancel' }, opts.cancelText || 'Cancel'),
         opts.okText === null ? null
           : h('button', { class: 'btn ' + (opts.danger ? 'danger' : 'primary'), onclick: () => close(true), 'data-testid': 'modal-ok' }, opts.okText || 'Save'))
     );
     const backdrop = h('div', { class: 'backdrop', onclick: e => { if (e.target === backdrop) close(false); } }, box);
     document.body.append(backdrop);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
+    if (opts.okText !== null) backdrop.addEventListener('formsubmit', () => close(true)); // Enter in a form -> OK
+    const fi = box.querySelector('input, select, textarea');
+    if (fi) setTimeout(() => fi.focus(), 30);
+    else if (opts.okText !== null) setTimeout(() => box.querySelector('.mfoot .btn').focus(), 30);
   });
 }
 
@@ -138,9 +152,14 @@ function emptyState(icon, title, sub, cta) {
     sub ? h('div', { class: 'es-sub' }, sub) : null,
     cta ? h('div', { class: 'es-cta' }, cta) : null);
 }
-function loading(box) { box.innerHTML = ''; box.append(
-  h('div', { class: 'skeleton' }, h('div', { class: 'sk sk-head' }), h('div', { class: 'sk sk-line' }), h('div', { class: 'sk sk-line w70' }), h('div', { class: 'sk sk-line w50' })));
-}
+function loading(box, isTable) { box.innerHTML = ''; box.append(isTable
+  ? h('div', { class: 'skeleton tbl', 'aria-hidden': 'true' },
+      h('div', { class: 'sk sk-head' }),
+      h('div', { class: 'sktr' }, h('div', { class: 'sk sk-line', style: 'width:28%' }), h('div', { class: 'sk sk-line', style: 'flex:1' })),
+      h('div', { class: 'sktr' }, h('div', { class: 'sk sk-line', style: 'width:34%' }), h('div', { class: 'sk sk-line', style: 'flex:1' })),
+      h('div', { class: 'sktr' }, h('div', { class: 'sk sk-line', style: 'width:24%' }), h('div', { class: 'sk sk-line', style: 'flex:1' })),
+      h('div', { class: 'sktr' }, h('div', { class: 'sk sk-line', style: 'width:30%' }), h('div', { class: 'sk sk-line', style: 'flex:1' })))
+  : h('div', { class: 'skeleton' }, h('div', { class: 'sk sk-head' }), h('div', { class: 'sk sk-line' }), h('div', { class: 'sk sk-line w70' }), h('div', { class: 'sk sk-line w50' }))); }
 
 /* inline SVG icons (stroke = currentColor) */
 const ICONS = {
@@ -177,7 +196,7 @@ async function allSites(force) { if (force || !S.sites) { const r = await api('/
 /* form builder: fields -> element with .get(k) .values() .show(k,on) */
 function form(fields) {
   const inputs = {};
-  const el = h('form', { class: 'form', onsubmit: e => e.preventDefault() });
+  const el = h('form', { class: 'form', onsubmit: e => { e.preventDefault(); el.dispatchEvent(new CustomEvent('formsubmit', { bubbles: true })); } });
   for (const f of fields) {
     let inp;
     if (f.type === 'select') {
@@ -239,7 +258,7 @@ function shell(active) {
     ['Events', '#/events', 'events', 1], ['Users', '#/users', 'users', 1], ['Settings', '#/settings', 'settings', 1],
   ];
   const nav = items.filter(it => !it[3] || S.user.role === 'admin')
-    .map(it => h('a', { href: it[1], class: active === it[2] ? 'active' : '', 'data-testid': 'nav-' + it[2] }, ico(it[2]), h('span', { class: 'nl' }, it[0])));
+    .map(it => h('a', { href: it[1], class: active === it[2] ? 'active' : '', 'data-testid': 'nav-' + it[2], 'aria-label': it[0], title: it[0] }, ico(it[2]), h('span', { class: 'nl' }, it[0])));
   const main = h('main', { id: 'main' });
   root.append(h('div', { class: 'layout' },
     h('aside', { class: 'sidebar' },
@@ -256,7 +275,7 @@ function shell(active) {
       main)));
   return main;
 }
-const LOGO = h('span', { class: 'mark', html: '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1" y="1" width="14" height="14" rx="4" fill="var(--accent)"/><path d="M5 11l3-6 3 6" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' }).cloneNode(true);
+const LOGO = h('span', { class: 'mark', html: '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1" y="1" width="14" height="14" rx="4" fill="var(--accent)"/><path d="M5.1 3.4v5.3a2.7 2.7 0 0 0 2.7 2.7h.4M9.9 3.4v8.3m0-8.3h1.2a2.35 2.35 0 0 1 0 4.7H9.9" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' }).cloneNode(true);
 
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); } catch (e) { /* session gone anyway */ } S.user = null; location.hash = '#/login'; }
 function stopTimer() { if (S.timer) { clearInterval(S.timer); S.timer = null; } if (S.poll) { clearInterval(S.poll); S.poll = null; } }
@@ -288,9 +307,16 @@ function renderLogin() {
   root.innerHTML = '';
   const u = h('input', { type: 'text', autocomplete: 'username', placeholder: 'Username', 'data-testid': 'login-username' });
   const pw = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', 'data-testid': 'login-password' });
+  const eye = h('button', { type: 'button', class: 'pw-show', 'aria-label': 'Show password', title: 'Show password' });
+  const setEye = () => { eye.innerHTML = pw.type === 'password'
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'; };
+  eye.addEventListener('click', () => { pw.type = pw.type === 'password' ? 'text' : 'password'; setEye(); pw.focus(); });
+  setEye();
   const err = h('div', { class: 'lerr' });
   const go = h('button', { class: 'btn primary block', 'data-testid': 'login-submit' }, 'Sign in');
   const submit = async () => {
+    if (go.disabled) return;
     err.textContent = '';
     btnDis(go, true, 'Signing in\u2026');
     try {
@@ -306,8 +332,9 @@ function renderLogin() {
       h('div', { class: 'logo big' }, LOGO.cloneNode(true), 'JilakePanel'),
       h('p', { class: 'sub' }, 'Server control panel'),
       h('label', { class: 'field' }, h('span', { class: 'flab' }, 'Username'), u),
-      h('label', { class: 'field' }, h('span', { class: 'flab' }, 'Password'), pw),
+      h('label', { class: 'field' }, h('span', { class: 'flab' }, 'Password'), h('span', { class: 'pwrow' }, pw, eye)),
       err, go)));
+  setTimeout(() => u.focus(), 50);
 }
 
 /* ---------------- dashboard ---------------- */
@@ -349,10 +376,10 @@ async function pageDashboard(main) {
 
 async function pageSites(main) {
   const box = h('div'); main.append(box);
-  const refresh = async () => {
-    loading(box);
+  const refresh = async (quiet) => {
+    if (!quiet) loading(box, true);
     let sites;
-    try { sites = await allSites(true); } catch (e) { box.innerHTML = ''; box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add')), empty('Sites API unavailable: ' + (e.error || e))); return; }
+    try { sites = await allSites(true); } catch (e) { if (!quiet) { box.innerHTML = ''; box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add')), empty('Sites API unavailable: ' + (e.error || e))); } return; }
     box.innerHTML = '';
     const sel = new Set();
     const delBtn = btn('Delete Selected', 'danger', async () => {
@@ -363,32 +390,39 @@ async function pageSites(main) {
           h('label', { class: 'chkrow' }, purge, h('span', null, 'Also delete system user and all files (purge)'))),
         { danger: true, okText: 'Delete' });
       if (!ok) return;
+      btnDis(delBtn, true, 'Deleting\u2026');
       for (const id of sel) { try { await api('/sites/' + id, { method: 'DELETE', body: { purge: purge.checked } }); } catch (e) { toast('Site ' + id + ': ' + e.error, 1); } }
+      btnDis(delBtn, false, 'Delete Selected');
       toast('Sites deleted'); refresh();
     });
+    const paint = () => {
+      delBtn.textContent = 'Delete Selected' + (sel.size ? ' (' + sel.size + ')' : '');
+      delBtn.style.display = sel.size ? '' : 'none';
+    };
+    paint();
     box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add'), delBtn));
     if (!sites.length) return box.append(emptyState('sites', 'No sites yet', 'Add your first site to get started \u2014 PHP, Node.js, static or a reverse proxy.', btn('+ Add Site', 'primary', addSiteModal)));
     const statusCell = s => {
       if (s.status === 'creating') return h('td', { class: 'status-cell creating' },
         h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' Creating\u2026');
       if (s.status === 'error') return h('td', { class: 'status-cell' },
-        badge('Error', 'red', s.status_msg ? { title: s.status_msg } : null),
+        badge('ERROR', 'red', s.status_msg ? { title: s.status_msg } : null),
         s.status_msg ? h('span', { class: 'status-msg', title: s.status_msg }, s.status_msg) : null);
-      return h('td', { class: 'status-cell' }, badge('ready', 'dim'));
+      return h('td', { class: 'status-cell' }, badge('READY', 'dim'));
     };
     const tbody = h('tbody');
     for (const s of sites) {
       const cb = h('input', { type: 'checkbox' });
-      cb.addEventListener('change', () => { cb.checked ? sel.add(s.id) : sel.delete(s.id); });
+      cb.addEventListener('change', () => { cb.checked ? sel.add(s.id) : sel.delete(s.id); paint(); });
       tbody.append(h('tr', { class: 'click' + (s.status === 'creating' ? ' creating' : ''), 'data-testid': 'site-row-' + s.domain, onclick: e => { if (!e.target.closest('input,button,a')) location.hash = '#/site/' + s.id; } },
-        h('td', null, cb),
+        h('td', { class: 'cbcell' }, cb),
         h('td', { class: 'strong' }, s.domain),
-        h('td', null, badge(s.type, 'type')),
-        h('td', null, s.tls ? badge('TLS', 'green') : badge('no TLS', 'dim')),
+        h('td', null, badge(s.type.toUpperCase(), 'type')),
+        h('td', null, s.tls ? badge('TLS', 'green') : badge('NO TLS', 'dim')),
         statusCell(s),
-        h('td', null, s.enabled ? badge('enabled', 'green') : badge('disabled', 'red')),
-        h('td', { class: 'dim' }, s.site_user),
-        h('td', { class: 'right' }, btn('Open', 'small', () => { location.hash = '#/site/' + s.id; }))));
+        h('td', null, s.enabled ? badge('ENABLED', 'green') : badge('DISABLED', 'red')),
+        h('td', { class: 'dim mono' }, s.site_user),
+        h('td', { class: 'right nowrap' }, btn('Open', 'small', () => { location.hash = '#/site/' + s.id; }))));
     }
     box.append(h('div', { class: 'card' }, h('table', { class: 'list' },
       h('thead', null, h('tr', null, h('th', { scope: 'col', style: 'width:32px' }, ''), h('th', { scope: 'col' }, 'Domain'), h('th', { scope: 'col' }, 'Type'), h('th', { scope: 'col' }, 'TLS'), h('th', { scope: 'col' }, 'Status'), h('th', { scope: 'col' }, 'Enabled'), h('th', { scope: 'col' }, 'User'), h('th', { scope: 'col' }, ''))),
@@ -430,7 +464,6 @@ async function pageSites(main) {
       desc.textContent = TYPE_DESC[t] || '';
     };
     f.get('type').addEventListener('change', sync); sync();
-    f.get('domain').addEventListener('keydown', e => e.stopPropagation());
     if (!await modal('Add Site', h('div', null, desc, f), { okText: 'Create site' })) return;
     const v = f.values();
     const body = { domain: v.domain, type: v.type, siteUser: v.siteUser, password: v.password };
@@ -461,7 +494,7 @@ async function pageSites(main) {
         S.prevStatus[s.id] = s.status;
       }
       if (!anyCreating) { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
-      else refresh();
+      else refresh(true);
     }, 1000);
   }
 
@@ -507,13 +540,15 @@ function tabGeneral(body, site) {
     if (t === 'php') patch.phpVersion = v.phpVersion;
     if (t === 'node') patch.appPort = v.appPort;
     if (t === 'proxy') patch.proxyTarget = v.proxyTarget;
+    btnDis(saveBtn, true, 'Saving\u2026');
     try {
       await api('/sites/' + site.id, { method: 'PATCH', body: patch });
       toast('Site updated');
       pageSite(body.parentNode, site.id, 'general'); // re-render detail with fresh state
-    } catch (e) { toast(e.error || 'update failed', 1); }
+    } catch (e) { toast(e.error || 'update failed', 1); btnDis(saveBtn, false, 'Save'); }
   };
-  body.append(h('div', { class: 'card panel' }, h('h3', null, 'Settings'), f, btn('Save', 'primary', save)),
+  const saveBtn = btn('Save', 'primary', save);
+  body.append(h('div', { class: 'card panel' }, h('h3', null, 'Settings'), f, saveBtn),
     h('div', { class: 'card panel' }, h('h3', null, 'Details'),
       ro('System user', site.site_user), ro('Docroot', site.docroot), ro('Created', fmtDate(site.created_at))));
 }
@@ -607,7 +642,9 @@ async function tabFiles(body, site) {
           h('tbody', null, items.map(it => {
             const dir = isDirE(it);
             return h('tr', { class: dir ? 'click' : '', onclick: e => { if (dir && !e.target.closest('button')) go(full(it.name)); } },
-              h('td', null, h('span', { class: 'fico' + (dir ? ' dir' : '') }, dir ? '\u25b8' : '\u00b7'), ' ', it.name),
+              h('td', null, h('span', { class: 'fico' + (dir ? ' dir' : '') }, dir
+                ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
+                : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'), ' ', it.name),
               h('td', { class: 'dim size' }, dir ? '\u2014' : fmtBytes(it.size)),
               h('td', { class: 'dim' }, fmtDate(it.mtime ?? it.modified ?? it.date)),
               h('td', { class: 'right' },
@@ -701,16 +738,20 @@ async function tabSqlite(body, site) {
     const ul = h('ul', { class: 'sidelist' });
     for (const it of items) {
       const p = dbPath(it);
-      ul.append(h('li', { class: (SQ.db === p ? 'active' : '') + '', title: p, onclick: () => { SQ.db = p; SQ.table = null; SQ.schema = null; SQ.page = 1; loadDbs(); loadTables(); renderRight(); } },
+      ul.append(h('li', { class: (SQ.db === p ? 'active' : '') + '', title: p, tabindex: 0, onclick: () => { SQ.db = p; SQ.table = null; SQ.schema = null; SQ.page = 1; loadDbs(); loadTables(); renderRight(); } },
         h('span', { class: 'dbico' }, '\u25c6'), ' ', baseN(p)));
     }
     dbsBox.innerHTML = '';
     dbsBox.append(h('div', { class: 'sidehead' }, 'Databases'),
-      h('div', { class: 'row pad' }, nameIn, btn('+ New', 'small primary', async () => {
-        const n = nameIn.value.trim(); if (!n) return;
-        try { await api('/sites/' + site.id + '/sqlite', { method: 'POST', body: { name: n } }); toast('Created ' + n); nameIn.value = ''; loadDbs(); }
-        catch (e) { toast(e.error, 1); }
-      }, 'data-testid', 'sqlite-create-db')),
+      h('div', { class: 'row pad' }, nameIn, (() => {
+        const nb = btn('+ New', 'small primary', async () => {
+          const n = nameIn.value.trim(); if (!n) return;
+          btnDis(nb, true, '\u2026');
+          try { await api('/sites/' + site.id + '/sqlite', { method: 'POST', body: { name: n } }); toast('Created ' + n); nameIn.value = ''; loadDbs(); }
+          catch (e) { toast(e.error, 1); btnDis(nb, false, '+ New'); }
+        }, 'data-testid', 'sqlite-create-db');
+        return nb;
+      })()),
       ul.children.length ? ul : pad('No .db files under the site home (usually ~/dbs).'));
   };
 
@@ -865,10 +906,10 @@ async function tabSqlite(body, site) {
         btn('+ Row', 'small primary', showAdd)),
       h('div', { class: 'gridwrap' }, h('table', { class: 'list grid' }, h('thead', null, thead), tbody)),
       h('div', { class: 'pager' },
-        btn('\u2190 Prev', 'small', () => { if (SQ.page > 1) { SQ.page--; loadRows(); } }),
+        (() => { const pb = btn('\u2190 Prev', 'small', () => { if (SQ.page > 1) { SQ.page--; loadRows(); } }); pb.disabled = SQ.page <= 1; return pb; })(),
         h('span', { class: 'dim' }, 'page ' + SQ.page + (SQ.total != null ? ' \u00b7 ' + SQ.total + ' rows' : '')),
-        btn('Next \u2192', 'small', () => { if (SQ.rows.length >= SQ.perPage) { SQ.page++; loadRows(); } }))),
-      msg ? h('div', { class: 'qmsg err' }, msg) : null);
+        (() => { const nb = btn('Next \u2192', 'small', () => { if (SQ.rows.length >= SQ.perPage) { SQ.page++; loadRows(); } }); nb.disabled = SQ.rows.length < SQ.perPage; return nb; })()),
+      msg ? h('div', { class: 'qmsg err' }, msg) : null));
   };
 
   const renderSqlPanel = (msg) => {
@@ -917,7 +958,7 @@ async function tabSqlite(body, site) {
 async function mysqlPanel(box) {
   const tableBox = h('div');
   const refresh = async () => {
-    loading(tableBox);
+    loading(tableBox, true);
     let dbs;
     try { dbs = arr(await api('/mysql/dbs'), 'dbs'); }
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('MySQL API unavailable: ' + (e.error || e))); return; }
@@ -998,7 +1039,7 @@ async function cronPanel(box, siteId) {
     } catch (e) { toast(e.error, 1); }
   }
   const refresh = async () => {
-    loading(tableBox);
+    loading(tableBox, true);
     let rows;
     try { rows = arr(await api('/sites/' + siteId + '/crons'), 'crons', 'items'); }
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('Cron API unavailable: ' + (e.error || e))); return; }
@@ -1080,7 +1121,7 @@ async function tabLogs(body, site) {
 async function backupsPanel(box, site) {
   const tableBox = h('div');
   const refresh = async () => {
-    loading(tableBox);
+    loading(tableBox, true);
     let list;
     try { list = arr(await api('/sites/' + site.id + '/backups'), 'backups', 'items'); }
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('Backups API unavailable: ' + (e.error || e))); return; }
@@ -1135,7 +1176,7 @@ function pageBackupsTop(main) {
 async function pageUsers(main) {
   const box = h('div'); main.append(box);
   const refresh = async () => {
-    loading(box);
+    loading(box, true);
     let rows;
     try { rows = arr(await api('/users'), 'users'); }
     catch (e) { box.innerHTML = ''; box.append(pageHead('Users'), empty('Users API unavailable: ' + (e.error || e))); return; }
@@ -1176,7 +1217,7 @@ async function pageEvents(main) {
   const filt = h('input', { class: 'small', placeholder: 'filter\u2026' });
   main.append(pageHead('Events', filt));
   const box = h('div', { class: 'card' }); main.append(box);
-  loading(box);
+  loading(box, true);
   let rows;
   try { rows = arr(await api('/events'), 'events'); }
   catch (e) { box.innerHTML = ''; box.append(empty('Events API unavailable: ' + (e.error || e))); return; }
@@ -1214,10 +1255,13 @@ async function pageSettings(main) {
     { key: 'backupRetention', label: 'Backup retention (days)', type: 'number', value: s.backupRetention ?? '', placeholder: '14' },
   ]);
   box.innerHTML = '';
-  box.append(h('h3', null, 'Panel settings'), f, btn('Save', 'primary', async () => {
+  const sb = btn('Save', 'primary', async () => {
+    btnDis(sb, true, 'Saving\u2026');
     try { await api('/settings', { method: 'PUT', body: f.values() }); toast('Settings saved'); }
     catch (e) { toast(e.error, 1); }
-  }));
+    btnDis(sb, false, 'Save');
+  });
+  box.append(h('h3', null, 'Panel settings'), f, sb);
 }
 
 /* ---------------- boot ---------------- */
