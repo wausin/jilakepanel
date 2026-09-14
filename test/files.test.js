@@ -143,6 +143,21 @@ test('mkdir + rename + delete', async () => {
   assert.equal((await api('/api/sites/1/file?path=htdocs/sub', { method: 'DELETE' })).status, 200);
 });
 
+test('mkdir/rename UI contract: {path: cwd, name/from/to} relative names', async () => {
+  fs.writeFileSync(path.join(home, 'htdocs', 'mytest.html'), '<p>x</p>');
+  // mkdir with a name relative to cwd (what the frontend sends)
+  assert.equal((await api('/api/sites/1/files/mkdir', { method: 'POST', body: JSON.stringify({ path: 'htdocs', name: 'images' }) })).status, 200);
+  assert.ok(fs.statSync(path.join(home, 'htdocs', 'images')).isDirectory(), 'folder created from {path,name}');
+  // bad name rejected
+  assert.equal((await api('/api/sites/1/files/mkdir', { method: 'POST', body: JSON.stringify({ path: 'htdocs', name: '../evil' }) })).status, 400);
+  // rename with cwd-relative from/to (frontend contract)
+  assert.equal((await api('/api/sites/1/files/rename', { method: 'POST', body: JSON.stringify({ path: 'htdocs', from: 'mytest.html', to: 'images/renamed.html' }) })).status, 200);
+  assert.ok(fs.existsSync(path.join(home, 'htdocs', 'images', 'renamed.html')), 'renamed into images/');
+  // cleanup
+  await api('/api/sites/1/file?path=htdocs/images/renamed.html', { method: 'DELETE' });
+  await api('/api/sites/1/file?path=htdocs/images', { method: 'DELETE' });
+});
+
 test('download: 500 when FakeSystem creates nothing; 500 mentions stderr on tar failure', async () => {
   const res = await fetch(base + '/api/sites/1/download?path=htdocs', { headers: { cookie } });
   assert.equal(res.status, 500);

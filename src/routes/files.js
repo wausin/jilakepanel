@@ -138,23 +138,34 @@ export default function filesRouter({ db, system, config }) {
 
   router.post('/sites/:id/files/mkdir', async (req, res) => {
     const site = siteOf(req, res); if (!site) return;
-    const abs = jailed(res, homeOf(site), req.body?.path); if (!abs) return;
+    const home = homeOf(site);
+    // UI contract: {path: <cwd>, name: <new folder name>}; legacy: {path: <full dir>}
+    const name = req.body?.name != null ? sanitizeName(req.body.name) : null;
+    if (req.body?.name != null && !name) return bad(res, 400, 'invalid folder name');
+    const abs = jailed(res, home, name != null ? path.join(String(req.body?.path ?? ''), name) : req.body?.path);
+    if (!abs) return;
     fs.mkdirSync(abs, { recursive: true });
     await chown(site, abs);
+    logEvent(db, req.user.id, 'file.mkdir', { site: site.domain, path: String(req.body?.path ?? ''), name: name ?? '' });
     res.json({ ok: true });
   });
 
   router.post('/sites/:id/files/rename', async (req, res) => {
     const site = siteOf(req, res); if (!site) return;
     const home = homeOf(site);
-    const from = jailed(res, home, req.body?.from);
-    const to = jailed(res, home, req.body?.to);
+    // UI contract: {path: <cwd>, from: <old name>, to: <new name>} — names are
+    // relative to path. Legacy: {from,to} relative to home.
+    const cwd = req.body?.path != null ? String(req.body.path) : '';
+    const resolve = (rel) => jailed(res, home, req.body?.path != null ? path.join(cwd, String(rel ?? '')) : rel);
+    const from = resolve(req.body?.from);
+    const to = resolve(req.body?.to);
     if (!from || !to) return;
     if (!fs.existsSync(from)) return bad(res, 404, 'source not found');
     if (fs.existsSync(to)) return bad(res, 400, 'target already exists');
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.renameSync(from, to);
     await chown(site, to);
+    logEvent(db, req.user.id, 'file.rename', { site: site.domain, from: String(req.body?.from ?? ''), to: String(req.body?.to ?? '') });
     res.json({ ok: true });
   });
 
