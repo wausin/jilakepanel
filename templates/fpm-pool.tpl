@@ -1,7 +1,7 @@
 [{{siteUser}}]
 user = {{siteUser}}
-group = {{siteUser}}
-listen = unix:{{socket}}
+group = www-data
+listen = {{socket}}
 listen.owner = {{siteUser}}
 listen.group = www-data
 listen.mode = 0660

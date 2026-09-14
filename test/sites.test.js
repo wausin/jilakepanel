@@ -111,6 +111,7 @@ test('create php site: returns creating then ready, db row, system calls, vhost 
 
   const pool = system.files.get(path.join(cfg.fpmPoolDir, '8.3', 'fpm', 'pool.d', 'example.conf'));
   assert.ok(pool && pool.includes('user = example') && pool.includes('pm.max_children = 5'), 'fpm pool conf');
+  assert.ok(pool.includes('listen = /run/php/php8.3-fpm-example.sock'), 'pool listen path without unix: prefix (Debian php-fpm rejects unix:)');
 
   const index = system.files.get(path.join(row.docroot, 'index.php'));
   assert.ok(index && index.includes('under construction') && index.includes('example.com'), 'default maintenance index written');
