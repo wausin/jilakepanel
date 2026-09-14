@@ -67,15 +67,28 @@ const hasCall = (file, ...needles) => system.calls.some(c => c.file === file && 
 const vhostPath = (domain) => path.join(cfg.vhostDir, `${domain}.conf`);
 const linkPath = (domain) => path.join(cfg.vhostEnabledDir, `${domain}.conf`);
 
-test('create php site: 200, db row, system calls, vhost + fpm files', async () => {
+async function waitFor(fn, timeoutMs = 2000) {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
+
+test('create php site: returns creating then ready, db row, system calls, vhost + fpm files', async () => {
   await login();
   const r = await api('/api/sites', {
     method: 'POST',
     body: JSON.stringify({ domain: 'example.com', type: 'php', siteUser: 'example', password: 'sup3rsecret', phpVersion: '8.3' }),
   });
   assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'creating');
+  assert.equal(r.body.domain, 'example.com');
   siteId = r.body.id;
+  await waitFor(() => db.prepare('SELECT status FROM sites WHERE id=?').get(siteId)?.status === 'ready');
   const row = db.prepare('SELECT * FROM sites WHERE id=?').get(siteId);
+  assert.equal(row.status, 'ready');
+  assert.equal(row.status_msg, null);
   assert.equal(row.domain, 'example.com');
   assert.equal(row.type, 'php');
   assert.equal(row.php_version, '8.3');
@@ -98,6 +111,9 @@ test('create php site: 200, db row, system calls, vhost + fpm files', async () =
 
   const pool = system.files.get(path.join(cfg.fpmPoolDir, '8.3', 'fpm', 'pool.d', 'example.conf'));
   assert.ok(pool && pool.includes('user = example') && pool.includes('pm.max_children = 5'), 'fpm pool conf');
+
+  const index = system.files.get(path.join(row.docroot, 'index.php'));
+  assert.equal(index, '<?php\nphpinfo();\n', 'default php index written');
 });
 
 test('validation: bad domain 400, missing phpVersion 400, duplicate 409', async () => {
@@ -131,7 +147,11 @@ test('list + get + 404', async () => {
   const list = await api('/api/sites');
   assert.equal(list.status, 200);
   assert.equal(list.body.length, 1);
-  assert.equal((await api(`/api/sites/${siteId}`)).status, 200);
+  assert.equal(list.body[0].status, 'ready');
+  assert.ok('status_msg' in list.body[0], 'status_msg present in list');
+  const got = await api(`/api/sites/${siteId}`);
+  assert.equal(got.status, 200);
+  assert.equal(got.body.status, 'ready');
   assert.equal((await api('/api/sites/9999')).status, 404);
 });
 
@@ -220,7 +240,7 @@ test('writeFile creates missing parent dirs on disk', () => {
   assert.equal(fs.readFileSync(p, 'utf8'), 'x', 'content matches');
 });
 
-test('site-create rollback on nginx failure cleans user + files', async () => {
+test('site-create failure path: status error, rollback cleans user + files', async () => {
   await login();
   system.createUsers = true;
   system.stub('nginx', { code: 1, stderr: 'boom' });
@@ -228,27 +248,30 @@ test('site-create rollback on nginx failure cleans user + files', async () => {
     method: 'POST',
     body: JSON.stringify({ domain: 'rollback.example.com', type: 'php', siteUser: 'rollback', password: 'sup3rsecret', phpVersion: '8.3' }),
   });
-  assert.equal(r.status, 500);
-  assert.match(r.body.error, /boom/);
-  assert.equal(db.prepare('SELECT 1 FROM sites WHERE domain=?').get('rollback.example.com'), undefined, 'no row inserted');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'creating');
+  await waitFor(() => db.prepare("SELECT status FROM sites WHERE domain='rollback.example.com'")?.get()?.status === 'error');
+  const row = db.prepare('SELECT * FROM sites WHERE domain=?').get('rollback.example.com');
+  assert.equal(row.status, 'error');
+  assert.match(row.status_msg, /boom/);
   assert.ok(hasCall('userdel', '-r', '-f', 'rollback'), 'userdel ran');
   assert.ok(hasCall('rm', '-f', path.join(cfg.fpmPoolDir, '8.3', 'fpm', 'pool.d', 'rollback.conf')), 'pool rm -f ran');
   assert.ok(hasCall('rm', '-f', vhostPath('rollback.example.com')), 'vhost rm -f ran');
   assert.ok(hasCall('rm', '-f', linkPath('rollback.example.com')), 'symlink rm -f ran');
+  assert.equal(db.prepare("SELECT 1 FROM sites WHERE domain=? AND status='ready'").get('rollback.example.com'), undefined, 'no ready row');
   system.results.delete('nginx');
   system.createUsers = false;
 });
 
-test('second attempt after rollback succeeds and inserts row', async () => {
-  system.createUsers = true;
+test('duplicate domain still 409 synchronously, no row added', async () => {
+  const countBefore = db.prepare('SELECT COUNT(*) c FROM sites WHERE domain=?').get('rollback.example.com').c;
   const r = await api('/api/sites', {
     method: 'POST',
-    body: JSON.stringify({ domain: 'rollback.example.com', type: 'php', siteUser: 'rollback', password: 'sup3rsecret', phpVersion: '8.3' }),
+    body: JSON.stringify({ domain: 'rollback.example.com', type: 'static', siteUser: 'rollback2', password: 'sup3rsecret' }),
   });
-  assert.equal(r.status, 200);
-  const row = db.prepare('SELECT * FROM sites WHERE domain=?').get('rollback.example.com');
-  assert.ok(row, 'row inserted');
-  system.createUsers = false;
+  assert.equal(r.status, 409);
+  const countAfter = db.prepare('SELECT COUNT(*) c FROM sites WHERE domain=?').get('rollback.example.com').c;
+  assert.equal(countAfter, countBefore, 'no row added');
 });
 
 test('ensureUser returns created/existing correctly', async () => {

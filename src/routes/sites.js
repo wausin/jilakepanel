@@ -63,6 +63,43 @@ export default function sitesRouter({ db, system, config }) {
     if (link) await system.exec('ln', ['-s', confPath(s.domain), linkPath(s.domain)]);
   }
 
+  // Default index so a brand-new site isn't a 404 on first hit.
+  function defaultIndex(s) {
+    if (s.type === 'php') {
+      // ponytail: phpinfo() is a dev shortcut; upgrade path = a real welcome page.
+      return { file: 'index.php', content: '<?php\nphpinfo();\n' };
+    }
+    return { file: 'index.html', content: `<!doctype html>\n<h1>Welcome to ${s.domain}</h1>\n` };
+  }
+
+  // Fire-and-forget creation job. Runs after res.json so the HTTP response is
+  // never blocked on useradd/nginx. node:sqlite is synchronous, so the DB writes
+  // here don't race the request handler.
+  async function createSiteJob(site, password) {
+    let madeUser = false;
+    try {
+      madeUser = await system.ensureUser(site.site_user, password);
+      await system.exec('mkdir', ['-p', site.docroot]);
+      const idx = defaultIndex(site);
+      system.writeFile(path.join(site.docroot, idx.file), idx.content);
+      await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, path.join(config.sitesDir, site.site_user)]);
+      await writeSiteFiles(site);
+      await system.reloadNginx();
+      if (site.type === 'php') await system.reloadFpm(site.php_version);
+      db.prepare("UPDATE sites SET status='ready', status_msg=NULL WHERE id=?").run(site.id);
+    } catch (e) {
+      try {
+        if (madeUser) await system.removeUser(site.site_user);
+        if (site.type === 'php') await system.exec('rm', ['-f', poolPath(site)]);
+        await system.exec('rm', ['-f', confPath(site.domain)]);
+        await system.exec('rm', ['-f', linkPath(site.domain)]);
+      } catch { /* best-effort rollback; ignore secondary errors */ }
+      try {
+        db.prepare("UPDATE sites SET status='error', status_msg=? WHERE id=?").run(String(e.message || 'unknown error').slice(0, 500), site.id);
+      } catch (e2) { console.error('site-create status update failed', e2); }
+    }
+  }
+
   router.get('/sites', (req, res) => {
     res.json(db.prepare('SELECT * FROM sites ORDER BY id').all());
   });
@@ -93,30 +130,17 @@ export default function sitesRouter({ db, system, config }) {
       node_version: type === 'node' ? (nodeVersion ?? null) : null,
       app_port: type === 'node' ? port : null,
       proxy_target: type === 'proxy' ? String(proxyTarget) : null,
-      tls: 0, enabled: 1,
+      tls: 0, enabled: 1, status: 'creating',
     };
-    let madeUser = false;
-    try {
-      madeUser = await system.ensureUser(site.site_user, password);
-      await system.exec('mkdir', ['-p', site.docroot]);
-      await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, homeDir]);
-      await writeSiteFiles(site);
-      await system.reloadNginx();
-      if (site.type === 'php') await system.reloadFpm(site.php_version);
-      const info = db.prepare(
-        'INSERT INTO sites(domain,type,site_user,docroot,php_version,node_version,app_port,proxy_target) VALUES(?,?,?,?,?,?,?,?)'
-      ).run(site.domain, site.type, site.site_user, site.docroot, site.php_version, site.node_version, site.app_port, site.proxy_target);
-      logEvent(db, req.user.id, 'site.create', { domain, type, siteUser });
-      res.json({ id: Number(info.lastInsertRowid), domain });
-    } catch (e) {
-      try {
-        if (madeUser) await system.removeUser(site.site_user);
-        if (site.type === 'php') await system.exec('rm', ['-f', poolPath(site)]);
-        await system.exec('rm', ['-f', confPath(site.domain)]);
-        await system.exec('rm', ['-f', linkPath(site.domain)]);
-      } catch { /* best-effort rollback; ignore secondary errors */ }
-      return bad(res, 500, e.message);
-    }
+    // ponytail: PATCH/DELETE are allowed while status is 'creating'|'error'; retry-on-error
+    // is a manual delete + recreate for now.
+    const info = db.prepare(
+      'INSERT INTO sites(domain,type,site_user,docroot,php_version,node_version,app_port,proxy_target,status) VALUES(?,?,?,?,?,?,?,?,?)'
+    ).run(site.domain, site.type, site.site_user, site.docroot, site.php_version, site.node_version, site.app_port, site.proxy_target, site.status);
+    site.id = Number(info.lastInsertRowid);
+    logEvent(db, req.user.id, 'site.create', { domain, type, siteUser });
+    res.json({ id: site.id, domain, status: 'creating' });
+    createSiteJob(site, password).catch((err) => console.error('site-create job failed', err));
   });
 
   router.patch('/sites/:id', adminRequired, async (req, res) => {

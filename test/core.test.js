@@ -112,12 +112,14 @@ test('migrations are idempotent across reopen', () => {
     const db1 = openDb(d);
     const cols = () => db1.prepare('PRAGMA table_info(crons)').all().map(c => c.name);
     assert.ok(cols().includes('enabled'), 'crons.enabled exists after first open');
-    assert.deepEqual(db1.prepare('SELECT v FROM _migrations ORDER BY v').all().map(r => r.v), [1, 2]);
+    assert.ok(db1.prepare('PRAGMA table_info(sites)').all().some(c => c.name === 'status'), 'sites.status exists after first open');
+    assert.deepEqual(db1.prepare('SELECT v FROM _migrations ORDER BY v').all().map(r => r.v), [1, 2, 3]);
     db1.close();
     const db2 = openDb(d); // must NOT throw "duplicate column"
     assert.ok(db2.prepare('PRAGMA table_info(crons)').all().some(c => c.name === 'enabled'));
+    assert.ok(db2.prepare('PRAGMA table_info(sites)').all().some(c => c.name === 'status'));
     db2.close();
   } finally {
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

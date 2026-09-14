@@ -2,7 +2,7 @@
 /* JilakePanel SPA. No build, no deps, no imports (so `node --check` parses it as a script). */
 
 const root = document.getElementById('root');
-const S = { user: null, hostname: '', sites: null, timer: null };
+const S = { user: null, hostname: '', sites: null, timer: null, poll: null, prevStatus: {}, statsOk: null };
 
 /* ---------------- helpers ---------------- */
 
@@ -49,7 +49,7 @@ async function api(url, opts) {
 
 function toast(msg, isErr) {
   let box = document.getElementById('toasts');
-  if (!box) { box = h('div', { id: 'toasts' }); document.body.append(box); }
+  if (!box) { box = h('div', { id: 'toasts', 'aria-live': 'polite' }); document.body.append(box); }
   const t = h('div', { class: 'toast' + (isErr ? ' err' : '') },
     h('span', { class: 't-ico', html: isErr
       ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
@@ -57,6 +57,7 @@ function toast(msg, isErr) {
     h('span', { class: 't-msg' }, String(msg)));
   t.addEventListener('click', () => t.remove());
   box.append(t);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 6000);
 }
 
@@ -114,15 +115,29 @@ function filePicker(multi) {
     document.body.append(inp); inp.click();
   });
 }
-const badge = (text, cls) => h('span', { class: 'badge ' + (cls || '') }, text);
+const badge = (text, cls, attrs) => h('span', Object.assign({ class: 'badge ' + (cls || '') }, attrs || {}), text);
 function btn(label, cls, fn, ...rest) {
   const attrs = { class: 'btn ' + (cls || ''), onclick: fn };
   for (let i = 0; i < rest.length; i += 2) if (rest[i] != null && rest[i + 1] != null) attrs[rest[i]] = rest[i + 1];
   return h('button', attrs, label);
 }
-function btnDis(b, dis, label) { b.disabled = dis; if (label != null) b.textContent = label; }
+function btnDis(b, dis, label) {
+  b.disabled = dis;
+  if (label != null) {
+    b.innerHTML = '';
+    if (dis) b.append(h('span', { class: 'spinner', 'aria-hidden': 'true' }));
+    b.append(document.createTextNode(label));
+  }
+}
 function pageHead(title, ...actions) { return h('div', { class: 'pagehead' }, h('h2', null, title), h('div', { class: 'acts' }, ...actions)); }
 function empty(msg) { return h('div', { class: 'card empty' }, msg); }
+function emptyState(icon, title, sub, cta) {
+  return h('div', { class: 'card empty-state' },
+    h('div', { class: 'es-ico' }, ico(icon)),
+    h('div', { class: 'es-title' }, title),
+    sub ? h('div', { class: 'es-sub' }, sub) : null,
+    cta ? h('div', { class: 'es-cta' }, cta) : null);
+}
 function loading(box) { box.innerHTML = ''; box.append(
   h('div', { class: 'skeleton' }, h('div', { class: 'sk sk-head' }), h('div', { class: 'sk sk-line' }), h('div', { class: 'sk sk-line w70' }), h('div', { class: 'sk sk-line w50' })));
 }
@@ -133,6 +148,7 @@ const ICONS = {
   sites: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><line x1="7" y1="7.5" x2="7.01" y2="7.5"/><line x1="7" y1="16.5" x2="7.01" y2="16.5"/>',
   crons: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
   mysql: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
+  db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.66 3.13 3 7 3s7-1.34 7-3V6"/><path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3"/>',
   backups: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8"/><path d="M10 12h4"/>',
   events: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
   users: '<path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -232,7 +248,7 @@ function shell(active) {
       h('div', { class: 'host' }, S.hostname || '\u2014')),
     h('div', { class: 'col' },
       h('header', { class: 'topbar' },
-        h('div', { class: 'tb-title' }, S.hostname || 'JilakePanel'),
+        h('div', { class: 'tb-title' }, h('span', { id: 'sys-status', class: 'sys-dot', title: 'System status unknown' }, ''), S.hostname || 'JilakePanel'),
         h('div', { class: 'tb-user' },
           h('button', { class: 'iconbtn', 'data-testid': 'theme-toggle', 'aria-label': 'Toggle theme', onclick: toggleTheme }, ico('sun', 'theme-sun'), ico('moon', 'theme-moon')),
           h('span', { class: 'chip' }, h('span', { class: 'avatar' }, String(S.user.username[0] || '?').toUpperCase()), h('span', { class: 'uname' }, S.user.username), badge(S.user.role, S.user.role === 'admin' ? 'green' : '')),
@@ -243,7 +259,7 @@ function shell(active) {
 const LOGO = h('span', { class: 'mark', html: '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1" y="1" width="14" height="14" rx="4" fill="var(--accent)"/><path d="M5 11l3-6 3 6" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' }).cloneNode(true);
 
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); } catch (e) { /* session gone anyway */ } S.user = null; location.hash = '#/login'; }
-function stopTimer() { if (S.timer) { clearInterval(S.timer); S.timer = null; } }
+function stopTimer() { if (S.timer) { clearInterval(S.timer); S.timer = null; } if (S.poll) { clearInterval(S.poll); S.poll = null; } }
 
 async function route() {
   stopTimer();
@@ -299,16 +315,20 @@ function renderLogin() {
 async function pageDashboard(main) {
   const wrap = h('div'); main.append(wrap);
   const sc = (ic, l, v) => h('div', { class: 'card stat' }, h('div', { class: 'st-ico' }, ico(ic)), h('div', { class: 'cl' }, l), h('div', { class: 'cv' }, v));
+  const dot = document.getElementById('sys-status');
   const draw = async () => {
     try {
       const st = obj(await api('/system/stats'));
       S.hostname = st.hostname || '';
+      S.statsOk = true;
+      if (dot) { dot.className = 'sys-dot ok'; dot.title = 'System reachable'; }
       let n = '\u2014';
       try { n = (await allSites(true)).length; } catch (e) { /* sites module may be down */ }
       const memTotal = st.memTotal || 0, memUsed = (st.memTotal || 0) - (st.memFree || 0);
       const memPct = memTotal ? Math.max(0, Math.min(100, Math.round(memUsed / memTotal * 100))) : 0;
+      const updated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       wrap.innerHTML = '';
-      wrap.append(pageHead('Dashboard'),
+      wrap.append(pageHead('Dashboard', h('span', { class: 'dim stat-updated' }, 'last updated ' + updated)),
         h('div', { class: 'cards' },
           sc('server', 'Hostname', h('span', { class: 'hostval' }, st.hostname), h('span', { class: 'stat-sub' }, st.platform)),
           sc('site', 'Sites', String(n), h('span', { class: 'stat-sub' }, 'configured')),
@@ -319,7 +339,7 @@ async function pageDashboard(main) {
             h('span', { class: 'stat-sub' }, memPct + '% used')),
           sc('uptime', 'Uptime', fmtUptime(st.uptime)),
           sc('node', 'Node.js', st.node)));
-    } catch (e) { wrap.innerHTML = ''; wrap.append(pageHead('Dashboard'), empty('Stats unavailable: ' + (e.error || e))); }
+    } catch (e) { S.statsOk = false; if (dot) { dot.className = 'sys-dot'; dot.title = 'System unreachable'; } wrap.innerHTML = ''; wrap.append(pageHead('Dashboard'), empty('Stats unavailable: ' + (e.error || e))); }
   };
   await draw();
   S.timer = setInterval(draw, 10000);
@@ -347,26 +367,43 @@ async function pageSites(main) {
       toast('Sites deleted'); refresh();
     });
     box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add'), delBtn));
-    if (!sites.length) return box.append(empty('No sites yet. Add your first site.'));
+    if (!sites.length) return box.append(emptyState('sites', 'No sites yet', 'Add your first site to get started \u2014 PHP, Node.js, static or a reverse proxy.', btn('+ Add Site', 'primary', addSiteModal)));
+    const statusCell = s => {
+      if (s.status === 'creating') return h('td', { class: 'status-cell creating' },
+        h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' Creating\u2026');
+      if (s.status === 'error') return h('td', { class: 'status-cell' },
+        badge('Error', 'red', s.status_msg ? { title: s.status_msg } : null),
+        s.status_msg ? h('span', { class: 'status-msg', title: s.status_msg }, s.status_msg) : null);
+      return h('td', { class: 'status-cell' }, badge('ready', 'dim'));
+    };
     const tbody = h('tbody');
     for (const s of sites) {
       const cb = h('input', { type: 'checkbox' });
       cb.addEventListener('change', () => { cb.checked ? sel.add(s.id) : sel.delete(s.id); });
-      tbody.append(h('tr', { class: 'click', 'data-testid': 'site-row-' + s.domain, onclick: e => { if (!e.target.closest('input,button,a')) location.hash = '#/site/' + s.id; } },
+      tbody.append(h('tr', { class: 'click' + (s.status === 'creating' ? ' creating' : ''), 'data-testid': 'site-row-' + s.domain, onclick: e => { if (!e.target.closest('input,button,a')) location.hash = '#/site/' + s.id; } },
         h('td', null, cb),
         h('td', { class: 'strong' }, s.domain),
         h('td', null, badge(s.type, 'type')),
         h('td', null, s.tls ? badge('TLS', 'green') : badge('no TLS', 'dim')),
+        statusCell(s),
         h('td', null, s.enabled ? badge('enabled', 'green') : badge('disabled', 'red')),
         h('td', { class: 'dim' }, s.site_user),
         h('td', { class: 'right' }, btn('Open', 'small', () => { location.hash = '#/site/' + s.id; }))));
     }
     box.append(h('div', { class: 'card' }, h('table', { class: 'list' },
-      h('thead', null, h('tr', null, h('th', { style: 'width:32px' }, ''), h('th', null, 'Domain'), h('th', null, 'Type'), h('th', null, 'TLS'), h('th', null, 'Status'), h('th', null, 'User'), h('th', null, ''))),
+      h('thead', null, h('tr', null, h('th', { scope: 'col', style: 'width:32px' }, ''), h('th', { scope: 'col' }, 'Domain'), h('th', { scope: 'col' }, 'Type'), h('th', { scope: 'col' }, 'TLS'), h('th', { scope: 'col' }, 'Status'), h('th', { scope: 'col' }, 'Enabled'), h('th', { scope: 'col' }, 'User'), h('th', { scope: 'col' }, ''))),
       tbody)));
+    if (sites.some(s => s.status === 'creating')) startPoll(refresh);
   };
 
+  const TYPE_DESC = {
+    php: 'Classic LAMP: nginx + PHP-FPM pool, docroot under the system user.',
+    node: 'Node.js back-end on an app port, reverse-proxied by nginx.',
+    static: 'Plain static files served straight from the docroot.',
+    proxy: 'Reverse proxy to an existing local service URL.',
+  };
   async function addSiteModal() {
+    const desc = h('p', { class: 'typedesc' });
     const f = form([
       { key: 'type', label: 'Type', type: 'select', value: 'php', testid: 'site-type', options: [{ value: 'php', label: 'PHP Site' }, { value: 'node', label: 'Node.js Back-end' }, { value: 'static', label: 'Static HTML Site' }, { value: 'proxy', label: 'Reverse Proxy' }] },
       { key: 'domain', label: 'Domain', placeholder: 'example.com', required: true, testid: 'site-domain' },
@@ -377,22 +414,55 @@ async function pageSites(main) {
       { key: 'siteUser', label: 'System user', placeholder: 'example', required: true, testid: 'site-user', hint: 'A Linux user (/home/<user>, docroot htdocs) is created for every site type and the site runs as it.' },
       { key: 'password', label: 'System user password', required: true, gen: true, testid: 'site-password' },
     ]);
+    const pwInput = f.get('password');
+    const pwRow = pwInput.closest('.pwrow');
+    if (pwRow) pwRow.append(h('button', { type: 'button', class: 'btn small', title: 'Copy password', 'aria-label': 'Copy password', onclick: async () => {
+      try { await navigator.clipboard.writeText(pwInput.value); toast('Password copied'); }
+      catch (e) { pwInput.select(); document.execCommand('copy'); toast('Password copied'); }
+    } }, '\u2398'));
+    desc.textContent = TYPE_DESC.php;
     const sync = () => {
       const t = f.get('type').value;
       f.show('phpVersion', t === 'php');
       f.show('nodeVersion', t === 'node');
       f.show('appPort', t === 'node');
       f.show('proxyTarget', t === 'proxy');
+      desc.textContent = TYPE_DESC[t] || '';
     };
     f.get('type').addEventListener('change', sync); sync();
-    if (!await modal('Add Site', f, { okText: 'Create site' })) return;
+    f.get('domain').addEventListener('keydown', e => e.stopPropagation());
+    if (!await modal('Add Site', h('div', null, desc, f), { okText: 'Create site' })) return;
     const v = f.values();
     const body = { domain: v.domain, type: v.type, siteUser: v.siteUser, password: v.password };
     if (v.type === 'php') body.phpVersion = v.phpVersion;
     if (v.type === 'node') { body.nodeVersion = v.nodeVersion; body.appPort = v.appPort; }
     if (v.type === 'proxy') body.proxyTarget = v.proxyTarget;
-    try { await api('/sites', { method: 'POST', body }); toast('Site ' + v.domain + ' created'); refresh(); }
+    try {
+      await api('/sites', { method: 'POST', body });
+      toast('Creating ' + v.domain + '\u2026');
+      refresh();
+      startPoll(refresh);
+    }
     catch (e) { toast(e.error || 'create failed', 1); }
+  }
+
+  function startPoll(refresh) {
+    if (S.poll) return;
+    S.prevStatus = {};
+    for (const s of S.sites || []) S.prevStatus[s.id] = s.status;
+    S.poll = setInterval(async () => {
+      let sites;
+      try { sites = await allSites(true); } catch (e) { return; }
+      const anyCreating = sites.some(s => s.status === 'creating');
+      for (const s of sites) {
+        const prev = S.prevStatus[s.id];
+        if (prev === 'creating' && s.status === 'ready') toast('Site ' + s.domain + ' is ready');
+        else if (prev === 'creating' && s.status === 'error') toast(s.status_msg || ('Site ' + s.domain + ' failed'), 1);
+        S.prevStatus[s.id] = s.status;
+      }
+      if (!anyCreating) { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
+      else refresh();
+    }, 1000);
   }
 
   await refresh();
@@ -538,7 +608,7 @@ async function tabFiles(body, site) {
             const dir = isDirE(it);
             return h('tr', { class: dir ? 'click' : '', onclick: e => { if (dir && !e.target.closest('button')) go(full(it.name)); } },
               h('td', null, h('span', { class: 'fico' + (dir ? ' dir' : '') }, dir ? '\u25b8' : '\u00b7'), ' ', it.name),
-              h('td', { class: 'dim' }, dir ? '\u2014' : fmtBytes(it.size)),
+              h('td', { class: 'dim size' }, dir ? '\u2014' : fmtBytes(it.size)),
               h('td', { class: 'dim' }, fmtDate(it.mtime ?? it.modified ?? it.date)),
               h('td', { class: 'right' },
                 !dir && btn('Edit', 'small', () => editFile(full(it.name))),
@@ -685,7 +755,7 @@ async function tabSqlite(body, site) {
   const renderRight = (msg) => {
     right.innerHTML = '';
     if (!SQ.db) {
-      right.append(empty('Select a SQLite database on the left, or create one. Browse tables, edit rows, run SQL, import/export \u2014 per site. This is what CloudPanel doesn\u2019t do.'));
+      right.append(emptyState('db', 'No database selected', 'Select a SQLite database on the left, or create one. Browse tables, edit rows, run SQL, import/export \u2014 per site.', null));
       return;
     }
     right.append(h('div', { class: 'dbbar' },
@@ -852,7 +922,7 @@ async function mysqlPanel(box) {
     try { dbs = arr(await api('/mysql/dbs'), 'dbs'); }
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('MySQL API unavailable: ' + (e.error || e))); return; }
     tableBox.innerHTML = '';
-    if (!dbs.length) return tableBox.append(empty('No MySQL/MariaDB databases yet.'));
+    if (!dbs.length) return tableBox.append(emptyState('mysql', 'No databases', 'Create a MySQL or MariaDB database with a dedicated user.', btn('+ Add Database', 'primary', add)));
     tableBox.append(h('table', { class: 'list' },
       h('thead', null, h('tr', null, h('th', null, 'Database'), h('th', null, 'User'), h('th', null, 'Site'), h('th', { class: 'right' }, 'Actions'))),
       h('tbody', null, dbs.map(d => {
@@ -933,7 +1003,7 @@ async function cronPanel(box, siteId) {
     try { rows = arr(await api('/sites/' + siteId + '/crons'), 'crons', 'items'); }
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('Cron API unavailable: ' + (e.error || e))); return; }
     tableBox.innerHTML = '';
-    if (!rows.length) return tableBox.append(empty('No cron jobs for this site yet.'));
+    if (!rows.length) return tableBox.append(emptyState('crons', 'No cron jobs', 'Schedule recurring tasks to run under this site\u2019s system user.', btn('+ Add Cron Job', 'primary', () => edit(null))));
     const tbody = h('tbody');
     for (const c of rows) {
       const on = c.enabled !== 0;
@@ -1016,12 +1086,12 @@ async function backupsPanel(box, site) {
     catch (e) { tableBox.innerHTML = ''; tableBox.append(empty('Backups API unavailable: ' + (e.error || e))); return; }
     tableBox.innerHTML = '';
     const rows = list.map(b => typeof b === 'string' ? { file: b } : b);
-    if (!rows.length) return tableBox.append(empty('No backups yet. Create one \u2014 files + SQLite copies + MySQL dumps in one tar.gz.'));
+    if (!rows.length) return tableBox.append(emptyState('backups', 'No backups yet', 'Create one \u2014 files + SQLite copies + MySQL dumps in a single tar.gz.', btn('Create Backup', 'primary', () => doBackup(mk))));
     tableBox.append(h('div', { class: 'card' }, h('table', { class: 'list' },
       h('thead', null, h('tr', null, h('th', null, 'File'), h('th', null, 'Size'), h('th', null, 'Created'), h('th', { class: 'right' }, 'Actions'))),
       h('tbody', null, rows.map(r0 => {
         const name = r0.file || r0.name || r0.path;
-        return h('tr', null, h('td', { class: 'mono' }, baseN(name)), h('td', { class: 'dim' }, fmtBytes(r0.size)), h('td', { class: 'dim' }, fmtDate(r0.mtime ?? r0.created_at ?? r0.date)),
+        return h('tr', null, h('td', { class: 'mono' }, baseN(name)), h('td', { class: 'dim size' }, fmtBytes(r0.size)), h('td', { class: 'dim' }, fmtDate(r0.mtime ?? r0.created_at ?? r0.date)),
           h('td', { class: 'right' },
             btn('Download', 'small', () => dl('/api/sites/' + site.id + '/download?path=' + encodeURIComponent('backups/' + name))),
             btn('Restore', 'small primary', async () => {
@@ -1034,14 +1104,15 @@ async function backupsPanel(box, site) {
             })));
       })))));
   };
-  const mk = btn('Create Backup', 'primary', async () => {
-    btnDis(mk, true, 'Backing up\u2026');
+  const doBackup = async (b) => {
+    btnDis(b, true, 'Backing up\u2026');
     toast('Backup started');
     try { await api('/sites/' + site.id + '/backup', { method: 'POST' }); toast('Backup complete'); }
     catch (e) { toast(e.error, 1); }
-    btnDis(mk, false, 'Create Backup');
+    btnDis(b, false, 'Create Backup');
     refresh();
-  });
+  };
+  const mk = btn('Create Backup', 'primary', () => doBackup(mk));
   box.innerHTML = '';
   box.append(pageHead('Backups \u2014 ' + site.domain, mk), tableBox);
   await refresh();
