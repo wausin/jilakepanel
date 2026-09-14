@@ -21,6 +21,8 @@ fi
 # panel supports other php-fpm versions too if installed manually (e.g. php8.2-fpm)
 apt-get install -y git nginx php8.3-fpm mariadb-server certbot python3-certbot-nginx
 
+install -d -m 755 /etc/nginx/sites-available/jlp /var/log/jlp
+
 if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone "$REPO" "$DIR"; fi
 cd "$DIR" && npm install --omit=dev
 

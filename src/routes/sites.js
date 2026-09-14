@@ -95,8 +95,9 @@ export default function sitesRouter({ db, system, config }) {
       proxy_target: type === 'proxy' ? String(proxyTarget) : null,
       tls: 0, enabled: 1,
     };
+    let madeUser = false;
     try {
-      await system.ensureUser(site.site_user, password);
+      madeUser = await system.ensureUser(site.site_user, password);
       await system.exec('mkdir', ['-p', site.docroot]);
       await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, homeDir]);
       await writeSiteFiles(site);
@@ -107,7 +108,15 @@ export default function sitesRouter({ db, system, config }) {
       ).run(site.domain, site.type, site.site_user, site.docroot, site.php_version, site.node_version, site.app_port, site.proxy_target);
       logEvent(db, req.user.id, 'site.create', { domain, type, siteUser });
       res.json({ id: Number(info.lastInsertRowid), domain });
-    } catch (e) { return bad(res, 500, e.message); }
+    } catch (e) {
+      try {
+        if (madeUser) await system.removeUser(site.site_user);
+        if (site.type === 'php') await system.exec('rm', ['-f', poolPath(site)]);
+        await system.exec('rm', ['-f', confPath(site.domain)]);
+        await system.exec('rm', ['-f', linkPath(site.domain)]);
+      } catch { /* best-effort rollback; ignore secondary errors */ }
+      return bad(res, 500, e.message);
+    }
   });
 
   router.patch('/sites/:id', adminRequired, async (req, res) => {

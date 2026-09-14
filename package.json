@@ -10,11 +10,16 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed"
   },
   "license": "MIT",
   "dependencies": {
     "busboy": "^1.6.0",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
   }
 }

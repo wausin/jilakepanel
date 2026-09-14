@@ -127,6 +127,12 @@ import { pathToFileURL } from 'node:url';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const app = createApp();
   fs.mkdirSync(app.locals.config.dataDir, { recursive: true });
+  if (process.env.JLP_DRYRUN !== '1' && process.platform === 'linux' && app.locals.system instanceof System) {
+    for (const dir of [app.locals.config.vhostDir, app.locals.config.logDir]) {
+      try { fs.mkdirSync(dir, { recursive: true }); }
+      catch (e) { console.log(`warn: could not create ${dir}: ${e.message}`); }
+    }
+  }
   const empty = app.locals.db.prepare('SELECT COUNT(*) c FROM users').get().c === 0;
   if (empty && baseConfig.adminUser && baseConfig.adminPassword) {
     createUser(app.locals.db, baseConfig.adminUser, baseConfig.adminPassword, 'admin');

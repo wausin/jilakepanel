@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import express from 'express';
 import { config as baseConfig } from '../src/config.js';
 import { openDb } from '../src/db.js';
-import { FakeSystem } from '../src/system.js';
+import { System, FakeSystem } from '../src/system.js';
 import { createUser, createSession, verifyPassword, sessionCookie, authRequired } from '../src/auth.js';
 import sitesRouter from '../src/routes/sites.js';
 
@@ -209,6 +209,54 @@ test('tls: issue cert, vhost gets 443 block, GET tls parses expiry', async () =>
   const s = await api(`/api/sites/${siteId}/tls`);
   assert.equal(s.body.tls, true);
   assert.equal(s.body.expires, 'Jan  1 00:00:00 2027 GMT');
+});
+
+test('writeFile creates missing parent dirs on disk', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jlp-wf-'));
+  const real = new System();
+  const p = path.join(tmp, 'a', 'b', 'c.conf');
+  real.writeFile(p, 'x');
+  assert.ok(fs.existsSync(p), 'file written');
+  assert.equal(fs.readFileSync(p, 'utf8'), 'x', 'content matches');
+});
+
+test('site-create rollback on nginx failure cleans user + files', async () => {
+  await login();
+  system.createUsers = true;
+  system.stub('nginx', { code: 1, stderr: 'boom' });
+  const r = await api('/api/sites', {
+    method: 'POST',
+    body: JSON.stringify({ domain: 'rollback.example.com', type: 'php', siteUser: 'rollback', password: 'sup3rsecret', phpVersion: '8.3' }),
+  });
+  assert.equal(r.status, 500);
+  assert.match(r.body.error, /boom/);
+  assert.equal(db.prepare('SELECT 1 FROM sites WHERE domain=?').get('rollback.example.com'), undefined, 'no row inserted');
+  assert.ok(hasCall('userdel', '-r', '-f', 'rollback'), 'userdel ran');
+  assert.ok(hasCall('rm', '-f', path.join(cfg.fpmPoolDir, '8.3', 'fpm', 'pool.d', 'rollback.conf')), 'pool rm -f ran');
+  assert.ok(hasCall('rm', '-f', vhostPath('rollback.example.com')), 'vhost rm -f ran');
+  assert.ok(hasCall('rm', '-f', linkPath('rollback.example.com')), 'symlink rm -f ran');
+  system.results.delete('nginx');
+  system.createUsers = false;
+});
+
+test('second attempt after rollback succeeds and inserts row', async () => {
+  system.createUsers = true;
+  const r = await api('/api/sites', {
+    method: 'POST',
+    body: JSON.stringify({ domain: 'rollback.example.com', type: 'php', siteUser: 'rollback', password: 'sup3rsecret', phpVersion: '8.3' }),
+  });
+  assert.equal(r.status, 200);
+  const row = db.prepare('SELECT * FROM sites WHERE domain=?').get('rollback.example.com');
+  assert.ok(row, 'row inserted');
+  system.createUsers = false;
+});
+
+test('ensureUser returns created/existing correctly', async () => {
+  const sys = new FakeSystem();
+  sys.createUsers = false;
+  assert.equal(await sys.ensureUser('u1', 'pw'), false, 'existing user -> false');
+  sys.createUsers = true;
+  assert.equal(await sys.ensureUser('u2', 'pw'), true, 'created user -> true');
 });
 
 test('DELETE purge: userdel + row gone', async () => {

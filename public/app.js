@@ -50,10 +50,14 @@ async function api(url, opts) {
 function toast(msg, isErr) {
   let box = document.getElementById('toasts');
   if (!box) { box = h('div', { id: 'toasts' }); document.body.append(box); }
-  const t = h('div', { class: 'toast' + (isErr ? ' err' : '') }, String(msg));
+  const t = h('div', { class: 'toast' + (isErr ? ' err' : '') },
+    h('span', { class: 't-ico', html: isErr
+      ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>' }),
+    h('span', { class: 't-msg' }, String(msg)));
   t.addEventListener('click', () => t.remove());
   box.append(t);
-  setTimeout(() => t.remove(), 6000);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, 6000);
 }
 
 function modal(title, body, opts) {
@@ -66,9 +70,9 @@ function modal(title, body, opts) {
       h('div', { class: 'mhead' }, h('h3', null, title), h('button', { class: 'x', 'aria-label': 'Close', onclick: () => close(false) }, '\u00d7')),
       h('div', { class: 'mbody' }, body),
       h('div', { class: 'mfoot' },
-        h('button', { onclick: () => close(false) }, opts.cancelText || 'Cancel'),
+        h('button', { onclick: () => close(false), 'data-testid': 'modal-cancel' }, opts.cancelText || 'Cancel'),
         opts.okText === null ? null
-          : h('button', { class: 'btn ' + (opts.danger ? 'danger' : 'primary'), onclick: () => close(true) }, opts.okText || 'Save'))
+          : h('button', { class: 'btn ' + (opts.danger ? 'danger' : 'primary'), onclick: () => close(true), 'data-testid': 'modal-ok' }, opts.okText || 'Save'))
     );
     const backdrop = h('div', { class: 'backdrop', onclick: e => { if (e.target === backdrop) close(false); } }, box);
     document.body.append(backdrop);
@@ -111,11 +115,46 @@ function filePicker(multi) {
   });
 }
 const badge = (text, cls) => h('span', { class: 'badge ' + (cls || '') }, text);
-function btn(label, cls, fn) { return h('button', { class: 'btn ' + (cls || ''), onclick: fn }, label); }
+function btn(label, cls, fn, ...rest) {
+  const attrs = { class: 'btn ' + (cls || ''), onclick: fn };
+  for (let i = 0; i < rest.length; i += 2) if (rest[i] != null && rest[i + 1] != null) attrs[rest[i]] = rest[i + 1];
+  return h('button', attrs, label);
+}
 function btnDis(b, dis, label) { b.disabled = dis; if (label != null) b.textContent = label; }
 function pageHead(title, ...actions) { return h('div', { class: 'pagehead' }, h('h2', null, title), h('div', { class: 'acts' }, ...actions)); }
 function empty(msg) { return h('div', { class: 'card empty' }, msg); }
-function loading(box) { box.innerHTML = ''; box.append(h('div', { class: 'loading' }, 'Loading\u2026')); }
+function loading(box) { box.innerHTML = ''; box.append(
+  h('div', { class: 'skeleton' }, h('div', { class: 'sk sk-head' }), h('div', { class: 'sk sk-line' }), h('div', { class: 'sk sk-line w70' }), h('div', { class: 'sk sk-line w50' })));
+}
+
+/* inline SVG icons (stroke = currentColor) */
+const ICONS = {
+  dash: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  sites: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><line x1="7" y1="7.5" x2="7.01" y2="7.5"/><line x1="7" y1="16.5" x2="7.01" y2="16.5"/>',
+  crons: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  mysql: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
+  backups: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8"/><path d="M10 12h4"/>',
+  events: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  settings: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/>',
+  mem: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 10h3M14 10h3M7 14h3M14 14h3"/>',
+  uptime: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  node: '<path d="M12 2L2 8v8l10 6 10-6V8L12 2z"/><path d="M12 22V8"/><path d="M12 12l8-4.8"/>',
+  server: '<rect x="2" y="3" width="20" height="7" rx="1.5"/><rect x="2" y="14" width="20" height="7" rx="1.5"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/>',
+  site: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/>',
+};
+function ico(name, cls) {
+  return h('span', { class: 'ico ' + (cls || ''), html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || '') + '</svg>' });
+}
+
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('jlp_theme', cur); } catch (e) { /* private mode */ }
+}
 
 async function allSites(force) { if (force || !S.sites) { const r = await api('/sites'); S.sites = arr(r, 'sites'); } return S.sites; }
 
@@ -140,6 +179,7 @@ function form(fields) {
       inp = h('input', { type: f.type || 'text', placeholder: f.placeholder || '', value: f.value != null ? f.value : '', autocomplete: 'off' });
     }
     if (f.required) inp.required = true;
+    if (f.testid) inp.setAttribute('data-testid', f.testid);
     const ctl = f.type === 'checkbox'
       ? h('label', { class: 'chkrow' }, inp, h('span', null, f.label))
       : h('label', { class: f.inline ? 'field inline' : 'field' }, h('span', { class: 'flab' }, f.label),
@@ -183,23 +223,24 @@ function shell(active) {
     ['Events', '#/events', 'events', 1], ['Users', '#/users', 'users', 1], ['Settings', '#/settings', 'settings', 1],
   ];
   const nav = items.filter(it => !it[3] || S.user.role === 'admin')
-    .map(it => h('a', { href: it[1], class: active === it[2] ? 'active' : '' }, it[0]));
+    .map(it => h('a', { href: it[1], class: active === it[2] ? 'active' : '', 'data-testid': 'nav-' + it[2] }, ico(it[2]), h('span', { class: 'nl' }, it[0])));
   const main = h('main', { id: 'main' });
   root.append(h('div', { class: 'layout' },
     h('aside', { class: 'sidebar' },
-      h('div', { class: 'logo' }, LOGO, 'JilakePanel'),
+      h('div', { class: 'logo' }, LOGO, h('span', { class: 'logo-txt' }, 'JilakePanel')),
       h('nav', null, nav),
       h('div', { class: 'host' }, S.hostname || '\u2014')),
     h('div', { class: 'col' },
       h('header', { class: 'topbar' },
         h('div', { class: 'tb-title' }, S.hostname || 'JilakePanel'),
         h('div', { class: 'tb-user' },
-          h('span', null, S.user.username), badge(S.user.role, S.user.role === 'admin' ? 'green' : ''),
-          btn('Logout', '', logout))),
+          h('button', { class: 'iconbtn', 'data-testid': 'theme-toggle', 'aria-label': 'Toggle theme', onclick: toggleTheme }, ico('sun', 'theme-sun'), ico('moon', 'theme-moon')),
+          h('span', { class: 'chip' }, h('span', { class: 'avatar' }, String(S.user.username[0] || '?').toUpperCase()), h('span', { class: 'uname' }, S.user.username), badge(S.user.role, S.user.role === 'admin' ? 'green' : '')),
+          btn('Logout', 'ghost', logout, 'data-testid', 'logout'))),
       main)));
   return main;
 }
-const LOGO = h('span', { class: 'mark', html: '<svg viewBox="0 0 16 16" width="18" height="18"><rect x="1" y="1" width="14" height="14" rx="3" fill="#22c55e"/><path d="M5 11l3-6 3 6" stroke="#111827" stroke-width="1.8" fill="none"/></svg>' }).cloneNode(true);
+const LOGO = h('span', { class: 'mark', html: '<svg viewBox="0 0 16 16" width="20" height="20"><rect x="1" y="1" width="14" height="14" rx="4" fill="var(--accent)"/><path d="M5 11l3-6 3 6" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' }).cloneNode(true);
 
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); } catch (e) { /* session gone anyway */ } S.user = null; location.hash = '#/login'; }
 function stopTimer() { if (S.timer) { clearInterval(S.timer); S.timer = null; } }
@@ -229,10 +270,10 @@ function badPage() { const m = shell(''); m.append(empty('Page not found or acce
 
 function renderLogin() {
   root.innerHTML = '';
-  const u = h('input', { type: 'text', autocomplete: 'username', placeholder: 'Username' });
-  const pw = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password' });
+  const u = h('input', { type: 'text', autocomplete: 'username', placeholder: 'Username', 'data-testid': 'login-username' });
+  const pw = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Password', 'data-testid': 'login-password' });
   const err = h('div', { class: 'lerr' });
-  const go = h('button', { class: 'btn primary block' }, 'Sign in');
+  const go = h('button', { class: 'btn primary block', 'data-testid': 'login-submit' }, 'Sign in');
   const submit = async () => {
     err.textContent = '';
     btnDis(go, true, 'Signing in\u2026');
@@ -247,30 +288,37 @@ function renderLogin() {
   root.append(h('div', { class: 'login-wrap' },
     h('div', { class: 'card login' },
       h('div', { class: 'logo big' }, LOGO.cloneNode(true), 'JilakePanel'),
-      h('p', { class: 'sub' }, 'Server control panel'), u, pw, err, go)));
+      h('p', { class: 'sub' }, 'Server control panel'),
+      h('label', { class: 'field' }, h('span', { class: 'flab' }, 'Username'), u),
+      h('label', { class: 'field' }, h('span', { class: 'flab' }, 'Password'), pw),
+      err, go)));
 }
 
 /* ---------------- dashboard ---------------- */
 
 async function pageDashboard(main) {
   const wrap = h('div'); main.append(wrap);
-  const sc = (l, v) => h('div', { class: 'card stat' }, h('div', { class: 'cl' }, l), h('div', { class: 'cv' }, v));
+  const sc = (ic, l, v) => h('div', { class: 'card stat' }, h('div', { class: 'st-ico' }, ico(ic)), h('div', { class: 'cl' }, l), h('div', { class: 'cv' }, v));
   const draw = async () => {
     try {
       const st = obj(await api('/system/stats'));
       S.hostname = st.hostname || '';
       let n = '\u2014';
       try { n = (await allSites(true)).length; } catch (e) { /* sites module may be down */ }
-      const gb = b => (b / 1073741824).toFixed(1);
+      const memTotal = st.memTotal || 0, memUsed = (st.memTotal || 0) - (st.memFree || 0);
+      const memPct = memTotal ? Math.max(0, Math.min(100, Math.round(memUsed / memTotal * 100))) : 0;
       wrap.innerHTML = '';
       wrap.append(pageHead('Dashboard'),
         h('div', { class: 'cards' },
-          sc('Hostname', st.hostname + ' \u00b7 ' + st.platform),
-          sc('Sites', String(n)),
-          sc('CPU', st.cpus + ' cores \u00b7 load ' + (Array.isArray(st.loadavg) ? st.loadavg.map(x => Number(x).toFixed(2)).join(' ') : st.loadavg)),
-          sc('Memory', gb((st.memTotal || 0) - (st.memFree || 0)) + ' / ' + gb(st.memTotal) + ' GB'),
-          sc('Uptime', fmtUptime(st.uptime)),
-          sc('Node.js', st.node)));
+          sc('server', 'Hostname', h('span', { class: 'hostval' }, st.hostname), h('span', { class: 'stat-sub' }, st.platform)),
+          sc('site', 'Sites', String(n), h('span', { class: 'stat-sub' }, 'configured')),
+          sc('cpu', 'CPU', h('span', { class: 'stat-sub' }, st.cpus + ' cores'), h('span', { class: 'load' }, 'load ' + (Array.isArray(st.loadavg) ? st.loadavg.map(x => Number(x).toFixed(2)).join(' ') : st.loadavg))),
+          sc('mem', 'Memory', h('div', { class: 'memwrap' },
+            h('div', { class: 'memtxt' }, h('b', null, fmtBytes(memUsed)), ' / ', fmtBytes(memTotal)),
+            h('div', { class: 'membar' }, h('div', { class: 'memfill', style: 'width:' + memPct + '%' }))),
+            h('span', { class: 'stat-sub' }, memPct + '% used')),
+          sc('uptime', 'Uptime', fmtUptime(st.uptime)),
+          sc('node', 'Node.js', st.node)));
     } catch (e) { wrap.innerHTML = ''; wrap.append(pageHead('Dashboard'), empty('Stats unavailable: ' + (e.error || e))); }
   };
   await draw();
@@ -284,7 +332,7 @@ async function pageSites(main) {
   const refresh = async () => {
     loading(box);
     let sites;
-    try { sites = await allSites(true); } catch (e) { box.innerHTML = ''; box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal)), empty('Sites API unavailable: ' + (e.error || e))); return; }
+    try { sites = await allSites(true); } catch (e) { box.innerHTML = ''; box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add')), empty('Sites API unavailable: ' + (e.error || e))); return; }
     box.innerHTML = '';
     const sel = new Set();
     const delBtn = btn('Delete Selected', 'danger', async () => {
@@ -298,13 +346,13 @@ async function pageSites(main) {
       for (const id of sel) { try { await api('/sites/' + id, { method: 'DELETE', body: { purge: purge.checked } }); } catch (e) { toast('Site ' + id + ': ' + e.error, 1); } }
       toast('Sites deleted'); refresh();
     });
-    box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal), delBtn));
+    box.append(pageHead('Sites', btn('+ Add Site', 'primary', addSiteModal, 'data-testid', 'sites-add'), delBtn));
     if (!sites.length) return box.append(empty('No sites yet. Add your first site.'));
     const tbody = h('tbody');
     for (const s of sites) {
       const cb = h('input', { type: 'checkbox' });
       cb.addEventListener('change', () => { cb.checked ? sel.add(s.id) : sel.delete(s.id); });
-      tbody.append(h('tr', { class: 'click', onclick: e => { if (!e.target.closest('input,button,a')) location.hash = '#/site/' + s.id; } },
+      tbody.append(h('tr', { class: 'click', 'data-testid': 'site-row-' + s.domain, onclick: e => { if (!e.target.closest('input,button,a')) location.hash = '#/site/' + s.id; } },
         h('td', null, cb),
         h('td', { class: 'strong' }, s.domain),
         h('td', null, badge(s.type, 'type')),
@@ -320,14 +368,14 @@ async function pageSites(main) {
 
   async function addSiteModal() {
     const f = form([
-      { key: 'type', label: 'Type', type: 'select', value: 'php', options: [{ value: 'php', label: 'PHP Site' }, { value: 'node', label: 'Node.js Back-end' }, { value: 'static', label: 'Static HTML Site' }, { value: 'proxy', label: 'Reverse Proxy' }] },
-      { key: 'domain', label: 'Domain', placeholder: 'example.com', required: true },
-      { key: 'phpVersion', label: 'PHP version', type: 'select', value: '8.3', options: ['8.1', '8.2', '8.3', '8.4', '8.5'] },
+      { key: 'type', label: 'Type', type: 'select', value: 'php', testid: 'site-type', options: [{ value: 'php', label: 'PHP Site' }, { value: 'node', label: 'Node.js Back-end' }, { value: 'static', label: 'Static HTML Site' }, { value: 'proxy', label: 'Reverse Proxy' }] },
+      { key: 'domain', label: 'Domain', placeholder: 'example.com', required: true, testid: 'site-domain' },
+      { key: 'phpVersion', label: 'PHP version', type: 'select', value: '8.3', testid: 'site-php-version', options: ['8.1', '8.2', '8.3', '8.4', '8.5'] },
       { key: 'nodeVersion', label: 'Node.js version', type: 'select', value: '22', options: ['18', '20', '22', '24'] },
-      { key: 'appPort', label: 'Application port', type: 'number', placeholder: '3000' },
-      { key: 'proxyTarget', label: 'Proxy target URL', placeholder: 'http://127.0.0.1:3000' },
-      { key: 'siteUser', label: 'System user', placeholder: 'example', required: true, hint: 'A Linux user (/home/<user>, docroot htdocs) is created for every site type and the site runs as it.' },
-      { key: 'password', label: 'System user password', required: true, gen: true },
+      { key: 'appPort', label: 'Application port', type: 'number', placeholder: '3000', testid: 'site-app-port' },
+      { key: 'proxyTarget', label: 'Proxy target URL', placeholder: 'http://127.0.0.1:3000', testid: 'site-proxy-target' },
+      { key: 'siteUser', label: 'System user', placeholder: 'example', required: true, testid: 'site-user', hint: 'A Linux user (/home/<user>, docroot htdocs) is created for every site type and the site runs as it.' },
+      { key: 'password', label: 'System user password', required: true, gen: true, testid: 'site-password' },
     ]);
     const sync = () => {
       const t = f.get('type').value;
@@ -365,7 +413,7 @@ async function pageSite(main, id, tab) {
     h('div', { class: 'pagehead' },
       h('h2', null, site.domain, ' ', badge(site.type, 'type'), site.tls ? badge('TLS', 'green') : null, site.enabled ? null : badge('disabled', 'red')),
       h('div', { class: 'acts' }, btn('\u2190 Sites', '', () => { location.hash = '#/sites'; }))),
-    h('div', { class: 'tabs' }, TABS.map(t => h('a', { href: '#/site/' + id + '/' + t[0], class: tab === t[0] ? 'active' : '' }, t[1]))),
+    h('div', { class: 'tabs' }, TABS.map(t => h('a', { href: '#/site/' + id + '/' + t[0], class: tab === t[0] ? 'active' : '', 'data-testid': 'tab-' + t[0] }, t[1]))),
     body);
   const fn = { general: tabGeneral, vhost: tabVhost, tls: tabTls, files: tabFiles, sqlite: tabSqlite, mysql: tabMysql, crons: tabCrons, logs: tabLogs, backups: tabBackups }[tab] || tabGeneral;
   fn(body, site);
@@ -579,7 +627,7 @@ async function tabSqlite(body, site) {
     let items = [];
     try { items = arr(await api('/sites/' + site.id + '/sqlite'), 'dbs', 'files'); }
     catch (e) { dbsBox.innerHTML = ''; dbsBox.append(h('div', { class: 'sidehead' }, 'Databases'), pad(e.error || 'SQLite API unavailable')); return; }
-    const nameIn = h('input', { placeholder: 'new.db', class: 'small' });
+    const nameIn = h('input', { placeholder: 'new.db', class: 'small', 'data-testid': 'sqlite-new-db' });
     const ul = h('ul', { class: 'sidelist' });
     for (const it of items) {
       const p = dbPath(it);
@@ -592,7 +640,7 @@ async function tabSqlite(body, site) {
         const n = nameIn.value.trim(); if (!n) return;
         try { await api('/sites/' + site.id + '/sqlite', { method: 'POST', body: { name: n } }); toast('Created ' + n); nameIn.value = ''; loadDbs(); }
         catch (e) { toast(e.error, 1); }
-      })),
+      }, 'data-testid', 'sqlite-create-db')),
       ul.children.length ? ul : pad('No .db files under the site home (usually ~/dbs).'));
   };
 
@@ -655,7 +703,7 @@ async function tabSqlite(body, site) {
         try { await api('/sites/' + site.id + '/sqlite/' + enc(SQ.db), { method: 'DELETE' }); SQ.db = null; SQ.table = null; toast('Database deleted'); loadDbs(); loadTables(); renderRight(); }
         catch (e) { toast(e.error, 1); }
       })));
-    if (SQ.table) renderGrid();
+    if (SQ.table) renderGrid(msg);
     renderSqlPanel(msg);
   };
 
@@ -672,7 +720,7 @@ async function tabSqlite(body, site) {
     } catch (e) { toast(e.error, 1); }
   };
 
-  const renderGrid = () => {
+  const renderGrid = (msg) => {
     const rows = SQ.rows, cols = SQ.cols;
     const whereCols = (SQ.schema && SQ.schema.length) ? SQ.schema : cols.map(c => ({ name: c }));
     const thead = h('tr', null,
@@ -754,16 +802,16 @@ async function tabSqlite(body, site) {
   };
 
   const renderSqlPanel = (msg) => {
-    const ta = h('textarea', { class: 'code sql', rows: 4, spellcheck: false, placeholder: 'SELECT * FROM sqlite_master;\n-- writes (INSERT/UPDATE/DELETE) ask for confirmation, then run with confirm:true' });
+    const ta = h('textarea', { class: 'code sql', rows: 4, spellcheck: false, 'data-testid': 'sqlite-sql', placeholder: 'SELECT * FROM sqlite_master;\n-- writes (INSERT/UPDATE/DELETE) ask for confirmation, then run with confirm:true' });
     const out = h('div', { class: 'sqlout' });
-    const rbtn = btn('Run', 'primary', runSQL);
+    const rbtn = btn('Run', 'primary', runSQL, 'data-testid', 'sqlite-run');
     async function runSQL() {
       const sql = ta.value.trim(); if (!sql) return;
       const first = sql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim().split(/[\s;(]+/)[0].toUpperCase();
       const write = !/^(SELECT|WITH|EXPLAIN)$/.test(first);
       if (write && !await confirmDlg('This looks like a write statement (' + (first || sql.slice(0, 12)) + '). Run it against ' + baseN(SQ.db) + '?', true)) return;
       btnDis(rbtn, true, 'Running\u2026');
-      try { renderQueryResult(out, await api(url('/query'), { sql, confirm: write })); loadTables(); }
+      try { renderQueryResult(out, await api(url('/query'), { method: 'POST', body: { sql, confirm: write } })); loadTables(); }
       catch (e) { out.innerHTML = ''; out.append(h('div', { class: 'qmsg err' }, e.error || 'query failed')); }
       btnDis(rbtn, false, 'Run');
     }
