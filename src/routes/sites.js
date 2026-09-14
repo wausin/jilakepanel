@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import path from 'node:path';
+import dns from 'node:dns';
 import { adminRequired } from '../auth.js';
 import { bad, logEvent, DOMAIN_RE, USER_RE, PHP_RE } from '../lib/util.js';
 
@@ -64,7 +65,7 @@ export default function sitesRouter({ db, system, config }) {
   }
 
   // Default index so a brand-new site isn't a 404 on first hit: an interactive
-  // "site under construction" page instead of an empty docroot.
+  // "site under construction" page, styled to match the JilakePanel admin UI.
   function defaultIndex(s) {
     const isPhp = s.type === 'php';
     const page = `<!doctype html>
@@ -74,56 +75,56 @@ export default function sitesRouter({ db, system, config }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${s.domain} — under construction</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: light; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0b1220; color: #e5e7eb; overflow: hidden;
+    background: #f6f8fb; color: #1c2430; overflow: hidden;
     font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
     position: relative;
   }
-  .bg { position: fixed; inset: -50%; z-index: 0; opacity: .5;
+  .bg { position: fixed; inset: -50%; z-index: 0; opacity: .7;
     background:
-      radial-gradient(40% 40% at 30% 30%, #16a34a33 0%, transparent 70%),
-      radial-gradient(35% 35% at 70% 65%, #0ea5e933 0%, transparent 70%);
+      radial-gradient(40% 40% at 28% 30%, #2563eb1f 0%, transparent 70%),
+      radial-gradient(35% 35% at 72% 68%, #1d4ed814 0%, transparent 70%);
     animation: drift 16s ease-in-out infinite alternate; }
   @keyframes drift { from { transform: translate(-3%, -2%) scale(1); } to { transform: translate(3%, 2%) scale(1.08); } }
-  .grid-bg { position: fixed; inset: 0; z-index: 0; opacity: .25;
-    background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px);
+  .grid-bg { position: fixed; inset: 0; z-index: 0; opacity: .5;
+    background-image: linear-gradient(#1c243008 1px, transparent 1px), linear-gradient(90deg, #1c243008 1px, transparent 1px);
     background-size: 44px 44px; mask-image: radial-gradient(60% 60% at 50% 45%, #000 30%, transparent 100%); }
   .card {
     position: relative; z-index: 1; text-align: center; padding: 52px 40px; max-width: 520px; margin: 20px;
-    background: #111827cc; border: 1px solid #ffffff14; border-radius: 18px;
-    box-shadow: 0 24px 70px #0009; backdrop-filter: blur(14px);
+    background: #ffffff; border: 1px solid #e4e9f0; border-radius: 14px;
+    box-shadow: 0 6px 18px rgba(16, 24, 40, .08), 0 24px 60px rgba(16, 24, 40, .06);
     animation: rise .7s cubic-bezier(.2,.7,.2,1) both;
   }
   @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
-  .mark { width: 52px; height: 52px; margin: 0 auto 22px; border-radius: 14px;
-    background: linear-gradient(135deg, #22c55e, #15803d); display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 10px 28px #16a34a55; animation: pulse 2.4s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { box-shadow: 0 10px 28px #16a34a40; } 50% { box-shadow: 0 10px 40px #16a34a80; } }
+  .mark { width: 52px; height: 52px; margin: 0 auto 22px; border-radius: 13px;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8); display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 22px #2563eb40; animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 8px 22px #2563eb36; } 50% { box-shadow: 0 8px 34px #2563eb5c; } }
   .mark svg { display: block; }
-  h1 { font-size: 26px; letter-spacing: -.02em; color: #f9fafb; margin-bottom: 8px; }
-  .dom { color: #4ade80; font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; }
-  p { color: #9ca3af; margin-top: 14px; }
+  h1 { font-size: 26px; letter-spacing: -.02em; color: #1c2430; margin-bottom: 8px; }
+  .dom { color: #2563eb; font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; }
+  p { color: #6b7789; margin-top: 14px; }
   .status { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; padding: 7px 16px;
-    background: #16a34a14; border: 1px solid #16a34a3d; border-radius: 999px; color: #4ade80; font-size: 13px; font-weight: 600; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: blink 1.4s ease-in-out infinite; }
+    background: #eaf1ff; border: 1px solid #c7d9ff; border-radius: 999px; color: #1d4ed8; font-size: 13px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #2563eb; animation: blink 1.4s ease-in-out infinite; }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-  .meter { height: 6px; border-radius: 999px; background: #ffffff0f; margin-top: 26px; overflow: hidden; }
+  .meter { height: 6px; border-radius: 999px; background: #e4e9f0; margin-top: 26px; overflow: hidden; }
   .meter > i { display: block; height: 100%; width: 40%; border-radius: inherit;
-    background: linear-gradient(90deg, #15803d, #22c55e); animation: slide 1.6s ease-in-out infinite; }
+    background: linear-gradient(90deg, #1d4ed8, #2563eb); animation: slide 1.6s ease-in-out infinite; }
   @keyframes slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(280%); } }
-  .tip { margin-top: 26px; padding-top: 18px; border-top: 1px solid #ffffff12; color: #6b7280; font-size: 12.5px; }
-  .tip b { color: #9ca3af; font-weight: 600; }
-  .foot { margin-top: 18px; color: #475569; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; }
+  .tip { margin-top: 26px; padding-top: 18px; border-top: 1px solid #e4e9f0; color: #6b7789; font-size: 12.5px; }
+  .tip b { color: #1c2430; font-weight: 600; }
+  .foot { margin-top: 18px; color: #9aa5b5; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; }
   @media (max-width: 480px) { .card { padding: 38px 24px; } h1 { font-size: 21px; } }
 </style>
 </head>
 <body>
 <div class="bg"></div><div class="grid-bg"></div>
 <div class="card">
-  <div class="mark"><svg width="26" height="26" viewBox="0 0 16 16" fill="none"><path d="M3 12.5 8 2.5l5 10" stroke="#062812" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 9.2h5.2" stroke="#062812" stroke-width="2" stroke-linecap="round"/></svg></div>
+  <div class="mark"><svg width="26" height="26" viewBox="0 0 16 16" fill="none"><path d="M3 12.5 8 2.5l5 10" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 9.2h5.2" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
   <div class="dom">${s.domain}</div>
   <h1>We&rsquo;re getting things ready</h1>
   <p>This site was just created and hasn&rsquo;t published any content yet. Once the owner uploads their files, this page will be replaced automatically.</p>
@@ -299,13 +300,30 @@ export default function sitesRouter({ db, system, config }) {
     const email = String((req.body || {}).email ?? '');
     if (!EMAIL_RE.test(email)) return bad(res, 400, 'invalid email');
     try {
-      await system.certIssue(site.domain, email);
+      // Pre-flight: only issue for names that actually resolve to this server.
+      // NXDOMAIN on www.<domain> otherwise fails the WHOLE certbot order.
+      const serverIp = await system.publicIp();
+      const resolve4 = (host) => dns.promises.resolve4(host).catch(() => null);
+      const domains = [site.domain];
+      const skipped = [];
+      const www = wwwOf(site.domain);
+      if (serverIp) {
+        const apexIps = await resolve4(site.domain);
+        if (!apexIps || !apexIps.includes(serverIp))
+          return bad(res, 400, `${site.domain} does not resolve to this server (${serverIp}). Fix the DNS A record first, then retry.`);
+        const wwwIps = await resolve4(www);
+        if (wwwIps && wwwIps.includes(serverIp)) domains.push(www);
+        else skipped.push(www);
+      } else {
+        skipped.push(www); // dryrun/tests: no public ip, apex-only
+      }
+      await system.certIssue(site.domain, email, domains);
       db.prepare('UPDATE sites SET tls=1 WHERE id=?').run(site.id);
       const fresh = get(site.id);
       system.writeFile(confPath(fresh.domain), renderVhost(fresh));
       await system.reloadNginx();
-      logEvent(db, req.user.id, 'site.tls', { domain: site.domain, email });
-      res.json({ ok: true });
+      logEvent(db, req.user.id, 'site.tls', { domain: site.domain, email, domains });
+      res.json({ ok: true, domains, skipped });
     } catch (e) { return bad(res, 500, e.message); }
   });
 

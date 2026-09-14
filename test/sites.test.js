@@ -220,7 +220,10 @@ test('tls: issue cert, vhost gets 443 block, GET tls parses expiry', async () =>
   assert.equal(badEmail.status, 400);
   const r = await api(`/api/sites/${siteId}/tls`, { method: 'POST', body: JSON.stringify({ email: 'admin@example.com' }) });
   assert.equal(r.status, 200);
-  assert.ok(hasCall('certbot', '--nginx', '-d', 'example.com', '-d', 'www.example.com'), 'certbot with apex + www');
+  // FakeSystem publicIp -> null (dryrun): apex-only, www skipped
+  assert.ok(hasCall('certbot', '--nginx', '-d', 'example.com'), 'certbot apex');
+  assert.ok(!system.calls.some(c => c.file === 'certbot' && c.args.includes('www.example.com')), 'www skipped without public ip');
+  assert.deepEqual(r.body.skipped, ['www.example.com']);
   assert.equal(db.prepare('SELECT tls FROM sites WHERE id=?').get(siteId).tls, 1);
   const vhost = system.files.get(vhostPath('example.com'));
   assert.ok(vhost.includes('ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;'), 'tls vhost');

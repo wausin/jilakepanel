@@ -28,9 +28,17 @@ export class System {
   async removeUser(user) { await this.exec('userdel', ['-r', '-f', user]); }
   async reloadNginx() { await this.ok('nginx', ['-t']); await this.ok('systemctl', ['reload', 'nginx']); }
   async reloadFpm(version) { await this.ok('systemctl', ['reload', `php${version}-fpm`]); }
-  async certIssue(domain, email) {
-    const other = domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`;
-    await this.ok('certbot', ['--nginx', '-n', '--redirect', '-d', domain, '-d', other, '-m', email, '--agree-tos']);
+  async certIssue(domain, email, domains) {
+    const list = (domains && domains.length ? domains : [domain]);
+    const args = ['--nginx', '-n', '--redirect'];
+    for (const d of list) args.push('-d', d);
+    args.push('-m', email, '--agree-tos');
+    await this.ok('certbot', args);
+  }
+  async publicIp() {
+    const r = await this.exec('curl', ['-s', '--max-time', '10', 'https://api.ipify.org']);
+    const ip = (r.stdout || '').trim();
+    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
   }
   async setCrontabFile(name, lines) { this.writeFile(`/etc/cron.d/${name}`, lines.join('\n') + '\n'); }
   writeFile(p, content) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content); }
