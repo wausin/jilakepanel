@@ -147,7 +147,7 @@ export default function sitesRouter({ db, system, config }) {
       await system.exec('mkdir', ['-p', site.docroot]);
       const idx = defaultIndex(site);
       system.writeFile(path.join(site.docroot, idx.file), idx.content);
-      await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, path.join(config.sitesDir, site.site_user)]);
+      await system.exec('chown', ['-R', `${site.site_user}:www-data`, path.join(config.sitesDir, site.site_user)]);
       await writeSiteFiles(site);
       await system.reloadNginx();
       if (site.type === 'php') await system.reloadFpm(site.php_version);

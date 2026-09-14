@@ -178,7 +178,7 @@ test('create db file', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.body.name, 'dbs/newdb.db');
   assert.ok(fs.existsSync(path.join(sitesDir, 'tuser', 'dbs', 'newdb.db')));
-  assert.ok(fake.calls.some(c => c.file === 'chown' && c.args.includes('tuser:tuser')));
+  assert.ok(fake.calls.some(c => c.file === 'chown' && c.args.includes('tuser:www-data')));
   const bad = await api('/api/sites/1/sqlite', { method: 'POST', body: JSON.stringify({ name: 'a/../b' }) });
   assert.equal(bad.status, 400);
 });

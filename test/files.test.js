@@ -111,7 +111,7 @@ test('PUT file: writes disk + chown via adapter; oversize 415', async () => {
   const r = await api('/api/sites/1/file?path=htdocs/page.html', { method: 'PUT', body: JSON.stringify({ content: 'hello' }) });
   assert.equal(r.status, 200);
   assert.equal(fs.readFileSync(path.join(home, 'htdocs', 'page.html'), 'utf8'), 'hello');
-  assert.ok(wasCalled('chown', a => a[0] === 'fuser:fuser' && a[1] === path.join(home, 'htdocs', 'page.html')));
+  assert.ok(wasCalled('chown', a => a[0] === 'fuser:www-data' && a[1] === path.join(home, 'htdocs', 'page.html')));
   const big = await api('/api/sites/1/file?path=htdocs/big.html', { method: 'PUT', body: JSON.stringify({ content: 'x'.repeat(1024 * 1024 + 1) }) });
   assert.equal(big.status, 415);
 });

@@ -135,7 +135,7 @@ export default function databasesRouter({ db, system, config }) {
     fs.mkdirSync(dir, { recursive: true });
     const p = path.join(dir, `${name}.db`);
     new DatabaseSync(p).close();
-    await system.exec('chown', ['-R', `${req.jlpSite.site_user}:${req.jlpSite.site_user}`, p]).catch(() => {});
+    await system.exec('chown', ['-R', `${req.jlpSite.site_user}:www-data`, p]).catch(() => {});
     logEvent(db, req.user.id, 'sqlite.create', { site: req.jlpSite.id, name });
     const st = fs.statSync(p);
     res.json({ name: `dbs/${name}.db`, size: st.size, mtime: Math.round(st.mtimeMs) });

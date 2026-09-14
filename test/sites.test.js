@@ -97,7 +97,7 @@ test('create php site: returns creating then ready, db row, system calls, vhost 
   assert.ok(hasCall('chpasswd'), 'chpasswd');
   assert.ok(hasCall('usermod', '-aG', 'www-data', 'example'), 'usermod');
   assert.ok(hasCall('mkdir', '-p', row.docroot), 'mkdir docroot');
-  assert.ok(hasCall('chown', '-R', 'example:example', path.join(cfg.sitesDir, 'example')), 'chown');
+  assert.ok(hasCall('chown', '-R', 'example:www-data', path.join(cfg.sitesDir, 'example')), 'chown');
   assert.ok(hasCall('ln', '-s', vhostPath('example.com'), linkPath('example.com')), 'ln -s');
   assert.ok(hasCall('nginx', '-t'), 'nginx -t');
   assert.ok(hasCall('systemctl', 'reload', 'nginx'), 'reload nginx');

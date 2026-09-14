@@ -16,7 +16,7 @@ export default function filesRouter({ db, system, config }) {
   const router = Router();
 
   const homeOf = (site) => path.join(config.sitesDir, site.site_user);
-  const chown = (site, abs) => system.exec('chown', [`${site.site_user}:${site.site_user}`, abs]);
+  const chown = (site, abs) => system.exec('chown', [`${site.site_user}:www-data`, abs]);
 
   function siteOf(req, res) {
     const s = db.prepare('SELECT * FROM sites WHERE id=?').get(Number(req.params.id));
@@ -335,7 +335,7 @@ export default function filesRouter({ db, system, config }) {
     // ponytail: symlink members can still point outside home (name list shows no type info).
     // Upgrade path: extract to a staging dir, scan with real fs for symlinks, then rsync/cp into home.
     await system.exec('tar', ['-xzf', abs, '-C', home, '--no-same-owner', '--no-same-permissions']);
-    await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, home]);
+    await system.exec('chown', ['-R', `${site.site_user}:www-data`, home]);
     logEvent(db, req.user.id, 'backup.restore', { site: site.domain, file });
     res.json({ ok: true });
   });
