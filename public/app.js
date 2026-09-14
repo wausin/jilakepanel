@@ -642,9 +642,9 @@ async function tabFiles(body, site) {
           h('tbody', null, items.map(it => {
             const dir = isDirE(it);
             return h('tr', { class: dir ? 'click' : '', onclick: e => { if (dir && !e.target.closest('button')) go(full(it.name)); } },
-              h('td', null, h('span', { class: 'fico' + (dir ? ' dir' : '') }, dir
+              h('td', null, h('span', { class: 'fico' + (dir ? ' dir' : ''), html: dir
                 ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
-                : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'), ' ', it.name),
+                : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>' }), ' ', it.name),
               h('td', { class: 'dim size' }, dir ? '\u2014' : fmtBytes(it.size)),
               h('td', { class: 'dim' }, fmtDate(it.mtime ?? it.modified ?? it.date)),
               h('td', { class: 'right' },
