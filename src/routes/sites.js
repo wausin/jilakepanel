@@ -55,7 +55,8 @@ export default function sitesRouter({ db, system, config }) {
     return main + '\n' + redirect;
   }
 
-  // ponytail: raw vhost edits get clobbered by any re-render (PATCH/TLS); upgrade path = marker-block includes like CloudPanel.
+  // ponytail: raw vhost edits still get clobbered when a re-render happens (now only when
+  // phpVersion/appPort/proxyTarget changed, or on TLS); upgrade path = marker-block includes like CloudPanel.
   async function writeSiteFiles(s, { link = true } = {}) {
     if (s.type === 'php' && s.php_version) system.writeFile(poolPath(s), renderPool(s));
     system.writeFile(confPath(s.domain), renderVhost(s));
@@ -129,17 +130,23 @@ export default function sitesRouter({ db, system, config }) {
     }
     if (b.enabled !== undefined) { sets.push('enabled=?'); args.push(b.enabled ? 1 : 0); }
     if (!sets.length) return bad(res, 400, 'nothing to update');
-    db.prepare(`UPDATE sites SET ${sets.join(',')} WHERE id=?`).run(...args, old.id);
-    const site = get(old.id);
+    // files + reload first, DB commit last: a file-op failure leaves DB untouched
+    const next = { ...old };
+    for (let i = 0; i < sets.length; i++) next[sets[i].slice(0, -2)] = args[i];
+    const confChanged = old.php_version !== next.php_version || old.app_port !== next.app_port || old.proxy_target !== next.proxy_target;
     try {
-      if (old.php_version && old.php_version !== site.php_version) await system.exec('rm', ['-f', poolPath(old)]);
-      await writeSiteFiles(site, { link: false });
+      if (confChanged) {
+        if (old.php_version && old.php_version !== next.php_version) await system.exec('rm', ['-f', poolPath(old)]);
+        await writeSiteFiles(next, { link: false });
+      }
       if (b.enabled !== undefined) {
-        if (!site.enabled) await system.exec('rm', ['-f', linkPath(site.domain)]);
-        else if (!old.enabled) await system.exec('ln', ['-s', confPath(site.domain), linkPath(site.domain)]);
+        if (!next.enabled) await system.exec('rm', ['-f', linkPath(next.domain)]);
+        else if (!old.enabled) await system.exec('ln', ['-s', confPath(next.domain), linkPath(next.domain)]);
       }
       await system.reloadNginx();
-      if (site.type === 'php' && old.php_version !== site.php_version) await system.reloadFpm(site.php_version);
+      if (next.type === 'php' && old.php_version !== next.php_version) await system.reloadFpm(next.php_version);
+      db.prepare(`UPDATE sites SET ${sets.join(',')} WHERE id=?`).run(...args, old.id);
+      const site = get(old.id);
       logEvent(db, req.user.id, 'site.patch', { domain: site.domain, ...b });
       res.json(site);
     } catch (e) { return bad(res, 500, e.message); }

@@ -11,13 +11,14 @@ NEED_NODE=1
 if command -v node >/dev/null 2>&1; then
   MAJ=$(node -p 'process.versions.node.split(".")[0]')
   MIN=$(node -p 'process.versions.node.split(".")[1]')
-  [ "$MAJ" -gt 22 ] || { [ "$MAJ" -eq 22 ] && [ "$MIN" -ge 13 ]; } && NEED_NODE=0
+  if [ "$MAJ" -gt 22 ] || { [ "$MAJ" -eq 22 ] && [ "$MIN" -ge 13 ]; }; then NEED_NODE=0; fi
 fi
 if [ "$NEED_NODE" = 1 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 
+# panel supports other php-fpm versions too if installed manually (e.g. php8.2-fpm)
 apt-get install -y git nginx php8.3-fpm mariadb-server certbot python3-certbot-nginx
 
 if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone "$REPO" "$DIR"; fi

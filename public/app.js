@@ -169,6 +169,9 @@ function lit(v) {
   return "'" + String(v).replace(/'/g, "''") + "'";
 }
 const matchCond = (cols, row) => cols.map(c => idq(c.name) + ' IS ' + lit(row[c.name])).join(' AND ');
+/* Buffer-like JSON ({type:'Buffer',data:[...]} or Uint8Array-ish) — never editable, never in SQL */
+const isBlob = v => v != null && typeof v === 'object' && (Array.isArray(v.data) || v.type === 'Buffer' || v instanceof Uint8Array);
+const blobLen = v => (Array.isArray(v.data) ? v.data.length : (v.length != null ? v.length : (v.data ? String(v.data).length : 0)));
 
 /* ---------------- chrome + router ---------------- */
 
@@ -378,16 +381,19 @@ function tabGeneral(body, site) {
   ]);
   const t = site.type;
   f.show('phpVersion', t === 'php');
-  f.show('appPort', t === 'node' || t === 'proxy');
+  f.show('appPort', t === 'node');
   f.show('proxyTarget', t === 'proxy');
   const save = async () => {
     const v = f.values();
     const patch = { enabled: v.enabled ? 1 : 0 };
-    if (t === 'php') patch.php_version = v.phpVersion;
-    if (t === 'node' || t === 'proxy') patch.app_port = v.appPort;
-    if (t === 'proxy') patch.proxy_target = v.proxyTarget;
-    try { await api('/sites/' + site.id, { method: 'PATCH', body: patch }); toast('Site updated'); }
-    catch (e) { toast(e.error || 'update failed', 1); }
+    if (t === 'php') patch.phpVersion = v.phpVersion;
+    if (t === 'node') patch.appPort = v.appPort;
+    if (t === 'proxy') patch.proxyTarget = v.proxyTarget;
+    try {
+      await api('/sites/' + site.id, { method: 'PATCH', body: patch });
+      toast('Site updated');
+      pageSite(body.parentNode, site.id, 'general'); // re-render detail with fresh state
+    } catch (e) { toast(e.error || 'update failed', 1); }
   };
   body.append(h('div', { class: 'card panel' }, h('h3', null, 'Settings'), f, btn('Save', 'primary', save)),
     h('div', { class: 'card panel' }, h('h3', null, 'Details'),
@@ -423,9 +429,8 @@ async function tabTls(body, site) {
     let txt;
     try {
       const r = obj(await api('/sites/' + site.id + '/tls'));
-      const installed = (r.installed ?? r.active ?? (r.status && r.status !== 'none') ?? !!r.expires_at ?? !!r.notAfter);
-      txt = installed
-        ? h('p', null, badge('issued', 'green'), ' Expires ', h('b', null, fmtDate(r.expires_at ?? r.notAfter ?? r.expiry ?? '\u2014')))
+      txt = (r.tls && r.expires)
+        ? h('p', null, badge('issued', 'green'), ' Issued — expires ', h('b', null, fmtDate(r.expires)))
         : h('p', { class: 'dim' }, 'No certificate installed.');
     } catch (e) {
       txt = h('p', { class: 'dim' }, e.status === 404 ? 'No certificate installed.' : 'TLS status unavailable: ' + (e.error || e));
@@ -514,7 +519,7 @@ async function tabFiles(body, site) {
     const f = form([{ key: 'name', label: 'File name', required: true, placeholder: 'index.html' }]);
     if (!await modal('New file', f)) return;
     const p = full(f.values().name);
-    try { await api('/sites/' + site.id + '/file', { method: 'PUT', body: { path: p, content: '' } }); toast('File created'); editFile(p); }
+    try { await api('/sites/' + site.id + '/file?path=' + encodeURIComponent(p), { method: 'PUT', body: { content: '' } }); toast('File created'); editFile(p); }
     catch (e) { toast(e.error, 1); }
   };
   const renameIt = async (name) => {
@@ -545,8 +550,8 @@ async function tabFiles(body, site) {
     const ta = h('textarea', { class: 'code big', spellcheck: false, wrap: 'off' });
     ta.value = content;
     const sv = btn('Save', 'primary', async () => {
-      btnDis(sv, true, 'Saving\u2026');
-      try { await api('/sites/' + site.id + '/file', { method: 'PUT', body: { path: p, content: ta.value } }); toast('Saved ' + p); }
+      btnDis(sv, true, 'Saving…');
+      try { await api('/sites/' + site.id + '/file?path=' + encodeURIComponent(p), { method: 'PUT', body: { content: ta.value } }); toast('Saved ' + p); }
       catch (e) { toast(e.error, 1); }
       btnDis(sv, false, 'Save');
     });
@@ -656,6 +661,7 @@ async function tabSqlite(body, site) {
 
   const cellTxt = v => v === null || v === undefined
     ? h('i', { class: 'null' }, 'NULL')
+    : isBlob(v) ? h('i', { class: 'dim' }, '<blob ' + blobLen(v) + ' bytes>')
     : (typeof v !== 'object' && String(v).length > 60 ? String(v).slice(0, 60) + '\u2026' : v);
 
   const run = async (sql, okMsg) => {
@@ -678,6 +684,7 @@ async function tabSqlite(body, site) {
       tbody.append(h('tr', null,
         cols.map(c => h('td', { class: 'cell', title: 'Click to expand / edit' }, cellTxt(row[c]))),
         h('td', { class: 'right' }, btn('\u2715', 'small danger', async () => {
+          if (whereCols.some(c => isBlob(row[c.name]))) return toast('blob columns are read-only — cannot identify this row for delete', 1);
           if (!await confirmDlg('Delete this row?\n' + JSON.stringify(row).slice(0, 200), true)) return;
           run('DELETE FROM ' + idq(SQ.table) + ' WHERE ' + matchCond(whereCols, row) + ';', 'Row deleted');
         }))));
@@ -689,10 +696,15 @@ async function tabSqlite(body, site) {
       if (addTr.parentNode) return;
       addTr.innerHTML = '';
       const sc_ = (SQ.schema && SQ.schema.length) ? SQ.schema : cols.map(c => ({ name: c, type: '' }));
-      const inps = sc_.map(c => { const i = h('input', { class: 'small', placeholder: (c.pk ? 'PK ' : '') + (c.type || 'value') }); addTr.append(h('td', null, i)); return i; });
+      const inps = sc_.map(c => {
+        const blobC = /BLOB/i.test(c.type || '');
+        const i = h('input', { class: 'small', placeholder: (c.pk ? 'PK ' : '') + (blobC ? '<blob read-only>' : (c.type || 'value')), disabled: blobC });
+        addTr.append(h('td', null, i)); return i;
+      });
       addTr.append(h('td', { class: 'right' }, btn('+', 'small primary', async () => {
         const cn = [], vals = [];
         sc_.forEach((c, i) => {
+          if (/BLOB/i.test(c.type || '')) return; // blob columns are read-only
           const v = inps[i].value.trim();
           if (v === '' && c.pk) return; // let autoincrement fill it
           cn.push(idq(c.name)); vals.push(v === '' ? (c.pk ? 'NULL' : "''") : lit(v));
@@ -708,6 +720,8 @@ async function tabSqlite(body, site) {
         if (td.dataset.exp) return;
         td.dataset.exp = '1';
         const row = rows[Math.floor(i / cols.length)], col = cols[i % cols.length], orig = row[col];
+        if (isBlob(orig)) { td.dataset.exp = ''; return toast('blob columns are read-only', 1); }
+        if (whereCols.some(c => isBlob(row[c.name]))) { td.dataset.exp = ''; return toast('blob columns are read-only — cannot identify this row for edit', 1); }
         const ta = h('textarea', { class: 'cellta', spellcheck: false });
         ta.value = orig == null ? '' : String(orig);
         const done = () => { td.dataset.exp = ''; td.innerHTML = ''; td.append(cellTxt(orig)); };
@@ -755,7 +769,7 @@ async function tabSqlite(body, site) {
     }
     ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') runSQL(); });
     right.append(h('div', { class: 'card panel sqlpanel' },
-      h('h3', null, 'SQL \u2014 ' + baseN(SQ.db), ' ', h('span', { class: 'hint inline' }, 'Ctrl+Enter runs \u00b7 multi-statement allowed \u00b7 PRAGMA/ATTACH rejected server-side' + (msg ? '' : ''))),
+      h('h3', null, 'SQL \u2014 ' + baseN(SQ.db), ' ', h('span', { class: 'hint inline' }, 'Ctrl+Enter runs \u00b7 Single SELECT (or WITH/EXPLAIN) returns rows. Writes (INSERT/UPDATE/DELETE/CREATE…) run multi-statement — confirm required.')),
       ta, h('div', { class: 'row' }, rbtn, msg ? h('span', { class: 'qmsg err inline' }, msg) : null), out));
   };
 
@@ -828,7 +842,7 @@ async function mysqlPanel(box) {
     if (!await modal('Add Database', f, { okText: 'Create' })) return;
     const v = f.values();
     const body = { name: v.name, user: v.user, password: v.password };
-    if (v.site) body.site_id = Number(v.site);
+    if (v.site) body.siteId = Number(v.site);
     try { await api('/mysql/dbs', { method: 'POST', body }); toast('Database created'); refresh(); }
     catch (e) { toast(e.error, 1); }
   };
@@ -875,7 +889,7 @@ async function cronPanel(box, siteId) {
     const tbody = h('tbody');
     for (const c of rows) {
       const on = c.enabled !== 0;
-      tbody.append(h('tr', null,
+      tbody.append(h('tr', { class: on ? '' : 'disabled-row' },
         h('td', { class: 'mono nowrap' }, [c.minute, c.hour, c.mday, c.month, c.wday].join(' ')),
         h('td', { class: 'dim' }, c.user || '\u2014'),
         h('td', { class: 'mono cmd' }, c.command),
@@ -961,7 +975,7 @@ async function backupsPanel(box, site) {
         const name = r0.file || r0.name || r0.path;
         return h('tr', null, h('td', { class: 'mono' }, baseN(name)), h('td', { class: 'dim' }, fmtBytes(r0.size)), h('td', { class: 'dim' }, fmtDate(r0.mtime ?? r0.created_at ?? r0.date)),
           h('td', { class: 'right' },
-            btn('Download', 'small', () => dl('/api/sites/' + site.id + '/download?path=' + encodeURIComponent(name))),
+            btn('Download', 'small', () => dl('/api/sites/' + site.id + '/download?path=' + encodeURIComponent('backups/' + name))),
             btn('Restore', 'small primary', async () => {
               if (!await modal('Restore backup', h('p', { class: 'confmsg' }, 'Restoring ', h('b', null, baseN(name)), ' overwrites current files and databases. Continue?'), { okText: 'Restore' })) return;
               try { await api('/sites/' + site.id + '/restore', { method: 'POST', body: { file: name } }); toast('Restore complete'); } catch (e) { toast(e.error, 1); }
@@ -1079,8 +1093,6 @@ async function pageSettings(main) {
   catch (e) { box.innerHTML = ''; box.append(empty('Settings API unavailable: ' + (e.error || e))); return; }
   const f = form([
     { key: 'backupRetention', label: 'Backup retention (days)', type: 'number', value: s.backupRetention ?? '', placeholder: '14' },
-    { key: 'siteSkelIndex', label: 'Site skeleton index file', value: s.siteSkelIndex ?? 'index.html' },
-    { key: 'timezone', label: 'Timezone', value: s.timezone ?? 'UTC' },
   ]);
   box.innerHTML = '';
   box.append(h('h3', null, 'Panel settings'), f, btn('Save', 'primary', async () => {

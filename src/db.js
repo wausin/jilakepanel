@@ -53,6 +53,9 @@ const MIGRATIONS = [
   );
   CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
   `,
+  `
+  ALTER TABLE crons ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+  `,
 ];
 
 export function openDb(dataDir) {

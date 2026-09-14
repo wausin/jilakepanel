@@ -143,10 +143,16 @@ test('mkdir + rename + delete', async () => {
   assert.equal((await api('/api/sites/1/file?path=htdocs/sub', { method: 'DELETE' })).status, 200);
 });
 
-test('download: tar args + 500 when FakeSystem creates nothing', async () => {
+test('download: 500 when FakeSystem creates nothing; 500 mentions stderr on tar failure', async () => {
   const res = await fetch(base + '/api/sites/1/download?path=htdocs', { headers: { cookie } });
   assert.equal(res.status, 500);
+  assert.match((await res.json()).error, /archive failed/);
   assert.ok(wasCalled('tar', a => a[0] === '-czf' && a[2] === '-C' && a[3] === home && a[4] === 'htdocs'));
+  system.stub('tar', { code: 1, stderr: 'boom' });
+  const res2 = await fetch(base + '/api/sites/1/download?path=htdocs', { headers: { cookie } });
+  assert.equal(res2.status, 500);
+  assert.match((await res2.json()).error, /boom/);
+  system.results.delete('tar');
 });
 
 test('crons: create/patch/delete sync /etc/cron.d file', async () => {
@@ -164,10 +170,32 @@ test('crons: create/patch/delete sync /etc/cron.d file', async () => {
   assert.equal((await api(`/api/sites/1/crons/${cid}`, { method: 'PATCH', body: JSON.stringify({ minute: '0' }) })).status, 200);
   content = system.files.get(key);
   assert.ok(content.includes('0 * * * * fuser /usr/bin/php task'));
+  // newline in command rejected
+  assert.equal((await api('/api/sites/1/crons', { method: 'POST', body: JSON.stringify({ minute: '*', hour: '*', mday: '*', month: '*', wday: '*', command: 'a\nb' }) })).status, 400);
+  // disabled cron syncs as a comment line
+  assert.equal((await api(`/api/sites/1/crons/${cid}`, { method: 'PATCH', body: JSON.stringify({ enabled: 0 }) })).status, 200);
+  content = system.files.get(key);
+  assert.ok(content.includes('# disabled: 0 * * * * fuser /usr/bin/php task'), content);
+  const list2 = await api('/api/sites/1/crons');
+  assert.equal(list2.body[0].enabled, 0);
+  assert.equal((await api(`/api/sites/1/crons/${cid}`, { method: 'PATCH', body: JSON.stringify({ enabled: 1 }) })).status, 200);
+  assert.ok(system.files.get(key).includes('0 * * * * fuser /usr/bin/php task'));
   const all = await api('/api/crons?siteId=1');
   assert.equal(all.body[0].domain, 'f.test');
   assert.equal((await api(`/api/sites/1/crons/${cid}`, { method: 'DELETE' })).status, 200);
   assert.equal(system.files.get(key).trim(), '# no crons');
+});
+
+test('jail: symlink pointing outside home is rejected', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'jlp-outside-'));
+  fs.writeFileSync(path.join(outside, 'secret.txt'), 'nope');
+  const link = path.join(home, 'link');
+  try { fs.rmSync(link, { force: true, recursive: true }); } catch {}
+  fs.symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const r = await api('/api/sites/1/file?path=link/secret.txt');
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /escape/);
+  fs.rmSync(link, { force: true });
 });
 
 test('logs: tail returns last N lines', async () => {
@@ -176,6 +204,38 @@ test('logs: tail returns last N lines', async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.lines, ['L296', 'L297', 'L298', 'L299', 'L300']);
   assert.equal((await api('/api/sites/1/logs?type=error')).status, 404);
+});
+
+test('logs RBAC: editor 403, admin 200', async () => {
+  createUser(db, 'ed1', 'sup3rsecret', 'editor');
+  const res = await fetch(base + '/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'ed1', password: 'sup3rsecret' }),
+  });
+  const edCookie = (res.headers.get('set-cookie') || '').split(';')[0];
+  const r = await fetch(base + '/api/sites/1/logs?type=access', { headers: { cookie: edCookie } });
+  assert.equal(r.status, 403);
+  const a = await api('/api/sites/1/logs?type=access');
+  assert.equal(a.status, 200);
+  const del = await fetch(base + '/api/sites/1/backups/250911-1015.tar.gz', { method: 'DELETE', headers: { cookie: edCookie } });
+  assert.equal(del.status, 403);
+});
+
+test('backup retention: files older than cutoff are swept', async () => {
+  const bdir = path.join(home, 'backups');
+  fs.mkdirSync(bdir, { recursive: true });
+  const old = path.join(bdir, '200101-0000.tar.gz');
+  const keep = path.join(bdir, '200101-0001.tar.gz');
+  fs.writeFileSync(old, 'x'); fs.writeFileSync(keep, 'x');
+  const past = new Date(Date.now() - 10 * 86400000);
+  fs.utimesSync(old, past, past);
+  // retention default 7 days; old (10d) must be swept, keep stays fresh
+  db.prepare("INSERT INTO settings(key,value) VALUES('backupRetention','7') ON CONFLICT(key) DO UPDATE SET value='7'").run();
+  const r = await api('/api/sites/1/backup', { method: 'POST' });
+  assert.equal(r.status, 200);
+  assert.ok(!fs.existsSync(old), 'old backup swept');
+  assert.ok(fs.existsSync(keep), 'fresh backup kept');
+  fs.rmSync(keep, { force: true });
 });
 
 test('backup + restore + retention', async () => {
@@ -193,8 +253,16 @@ test('backup + restore + retention', async () => {
   const fake = path.join(home, 'backups', '250911-1015.tar.gz');
   fs.mkdirSync(path.dirname(fake), { recursive: true });
   fs.writeFileSync(fake, 'x');
+  // restore now lists members first; stubOnce the -tzf list then allow extraction
+  system.stubOnce('tar', { code: 0, stdout: 'fuser-250911-1015/htdocs/x\nfuser-250911-1015/dbs/good\n' });
+  const before = system.calls.length;
   assert.equal((await api('/api/sites/1/restore', { method: 'POST', body: JSON.stringify({ file: '250911-1015.tar.gz' }) })).status, 200);
-  assert.ok(wasCalled('tar', a => a[0] === '-xzf' && a[1] === fake && a[2] === '-C'));
+  assert.ok(wasCalled('tar', a => a[0] === '-xzf' && a[1] === fake && a[2] === '-C' && a.includes('--no-same-owner') && a.includes('--no-same-permissions')));
+  // traversal member -> 400 and NO extract call
+  const callsBeforeBad = system.calls.length;
+  system.stubOnce('tar', { code: 0, stdout: 'htdocs/ok\n../evil\n' });
+  assert.equal((await api('/api/sites/1/restore', { method: 'POST', body: JSON.stringify({ file: '250911-1015.tar.gz' }) })).status, 400);
+  assert.ok(!system.calls.slice(callsBeforeBad).some(c => c.file === 'tar' && c.args[0] === '-xzf'), 'no -xzf after unsafe members');
   assert.equal((await api('/api/sites/1/backups/250911-1015.tar.gz', { method: 'DELETE' })).status, 200);
   assert.ok(!fs.existsSync(fake));
 });

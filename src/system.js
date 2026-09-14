@@ -26,7 +26,10 @@ export class System {
   async removeUser(user) { await this.exec('userdel', ['-r', '-f', user]); }
   async reloadNginx() { await this.ok('nginx', ['-t']); await this.ok('systemctl', ['reload', 'nginx']); }
   async reloadFpm(version) { await this.ok('systemctl', ['reload', `php${version}-fpm`]); }
-  async certIssue(domain, email) { await this.ok('certbot', ['--nginx', '-n', '--redirect', '-d', domain, '-m', email, '--agree-tos']); }
+  async certIssue(domain, email) {
+    const other = domain.startsWith('www.') ? domain.slice(4) : `www.${domain}`;
+    await this.ok('certbot', ['--nginx', '-n', '--redirect', '-d', domain, '-d', other, '-m', email, '--agree-tos']);
+  }
   async setCrontabFile(name, lines) { this.writeFile(`/etc/cron.d/${name}`, lines.join('\n') + '\n'); }
   writeFile(p, content) { fs.writeFileSync(p, content); }
   readFile(p) { return fs.readFileSync(p, 'utf8'); }
@@ -34,14 +37,18 @@ export class System {
 
 // Records calls, returns canned results. Used in tests and JLP_DRYRUN=1 dev mode.
 export class FakeSystem extends System {
-  constructor() { super(); this.calls = []; this.files = new Map(); this.results = new Map(); this.users = new Map(); }
+  constructor() { super(); this.calls = []; this.files = new Map(); this.results = new Map(); this.once = new Map(); this.users = new Map(); }
   stub(file, result) { this.results.set(file, { code: 0, stdout: '', stderr: '', ...result }); }
+  // stub for the NEXT exec of `file` only, then clears itself
+  stubOnce(file, result) { (this.once.get(file) ?? this.once.set(file, []).get(file)).push({ code: 0, stdout: '', stderr: '', ...result }); }
   async exec(file, args = [], opts = {}) {
     this.calls.push({ file, args, opts });
-    if (file === 'tee' || file === 'sh' || file === 'install') return { code: 0, stdout: '', stderr: '' };
+    const q = this.once.get(file);
+    if (q?.length) return q.shift();
     if (this.results.has(file)) return this.results.get(file);
     return { code: 0, stdout: '', stderr: '' };
   }
   writeFile(p, content) { this.files.set(p, content); }
-  readFile(p) { if (!this.files.has(p)) throw new Error(`FakeSystem: no file ${p}`); return this.files.get(p); }
+  // virtual map first, real disk fallback (templates etc. must resolve on dryrun boots)
+  readFile(p) { if (this.files.has(p)) return this.files.get(p); return fs.readFileSync(p, 'utf8'); }
 }

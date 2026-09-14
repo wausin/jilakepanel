@@ -123,6 +123,14 @@ test('query select / confirm rules / rejects', async () => {
   assert.equal(err.status, 400);
 });
 
+test('query multi-statement read: node:sqlite prepares first stmt only', async () => {
+  // ponytail: node:sqlite prepare() compiles only the first statement; trailing `; SELECT 2`
+  // is ignored, so a multi-stmt SELECT returns a single result set (200, not 400).
+  const r = await api(`/api/sites/1/sqlite/${DB}/query`, { method: 'POST', body: JSON.stringify({ sql: 'SELECT 1 AS a; SELECT 2 AS b' }) });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.results.length, 1);
+});
+
 test('export', async () => {
   const r = await raw(`/api/sites/1/sqlite/${DB}/export`, { headers: { cookie } });
   assert.equal(r.status, 200);

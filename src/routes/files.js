@@ -84,15 +84,18 @@ export default function filesRouter({ db, system, config }) {
 
   function saveUpload(req, dir) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+      const win = (name) => { if (!settled) { settled = true; resolve(name); } };
       const bb = Busboy({ headers: req.headers, limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 5 } });
-      let done = false, limitHit = false, sawFile = false;
-      const fail = (err) => { if (!done) { done = true; reject(err); } };
-      const win = (name) => { if (!done) { done = true; resolve(name); } };
+      let limitHit = false, sawFile = false;
       bb.on('file', (field, file, info) => {
         if (field !== 'file') { file.resume(); return; }
         sawFile = true;
         const name = sanitizeName(info.filename);
         if (!name) { file.resume(); return fail(new Error('invalid filename')); }
+        const ext = path.extname(path.basename(String(info.filename))).toLowerCase();
+        const safeExt = /^[.a-z0-9]{0,10}$/.test(ext) ? ext : '';
         const target = path.join(dir, name);
         const ws = fs.createWriteStream(target);
         file.on('limit', () => {
@@ -161,8 +164,12 @@ export default function filesRouter({ db, system, config }) {
     const abs = jailed(res, home, req.query.path); if (!abs) return;
     if (!fs.existsSync(abs)) return bad(res, 404, 'not found');
     const tmp = path.join(config.dataDir, `dl-${crypto.randomBytes(6).toString('hex')}.tgz`);
-    await system.exec('tar', ['-czf', tmp, '-C', home, relPosix(home, abs) || '.']);
-    if (!fs.existsSync(tmp)) return bad(res, 500, 'tar produced no output');
+    const r = await system.exec('tar', ['-czf', tmp, '-C', home, relPosix(home, abs) || '.']);
+    const ok = r.code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0;
+    if (!ok) {
+      fs.rmSync(tmp, { force: true });
+      return bad(res, 500, `archive failed${r.stderr ? `: ${r.stderr}` : ''}`);
+    }
     res.on('close', () => fs.rmSync(tmp, { force: true }));
     res.download(tmp, path.basename(abs) + '.tgz');
   });
@@ -172,7 +179,9 @@ export default function filesRouter({ db, system, config }) {
   function syncCron(site) {
     const rows = db.prepare('SELECT * FROM crons WHERE site_id=?').all(site.id);
     const lines = rows.length
-      ? ['SHELL=/bin/bash', ...rows.map(r => `${r.minute} ${r.hour} ${r.mday} ${r.month} ${r.wday} ${r.user} ${r.command}`)]
+      ? ['SHELL=/bin/bash', ...rows.map(r => r.enabled
+        ? `${r.minute} ${r.hour} ${r.mday} ${r.month} ${r.wday} ${r.user} ${r.command}`
+        : `# disabled: ${r.minute} ${r.hour} ${r.mday} ${r.month} ${r.wday} ${r.user} ${r.command}`)]
       : ['# no crons'];
     system.setCrontabFile(`jlp-${site.site_user}`, lines);
   }
@@ -190,11 +199,11 @@ export default function filesRouter({ db, system, config }) {
 
   router.post('/sites/:id/crons', (req, res) => {
     const site = siteOf(req, res); if (!site) return;
-    const { minute, hour, mday, month, wday, command, comment } = req.body || {};
+    const { minute, hour, mday, month, wday, command, comment, enabled } = req.body || {};
     const job = { minute, hour, mday, month, wday, command };
     if (!validJob(job)) return bad(res, 400, 'invalid cron schedule or command');
-    const info = db.prepare('INSERT INTO crons(site_id,minute,hour,mday,month,wday,user,command,comment) VALUES(?,?,?,?,?,?,?,?,?)')
-      .run(site.id, minute, hour, mday, month, wday, site.site_user, command, comment ? String(comment) : null);
+    const info = db.prepare('INSERT INTO crons(site_id,minute,hour,mday,month,wday,user,command,comment,enabled) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run(site.id, minute, hour, mday, month, wday, site.site_user, command, comment ? String(comment) : null, enabled === undefined ? 1 : (enabled ? 1 : 0));
     syncCron(site);
     logEvent(db, req.user.id, 'cron.create', { site: site.domain, id: Number(info.lastInsertRowid) });
     res.json({ id: Number(info.lastInsertRowid) });
@@ -208,8 +217,9 @@ export default function filesRouter({ db, system, config }) {
     for (const f of [...SCHED_FIELDS, 'command']) if (req.body?.[f] !== undefined) merged[f] = req.body[f];
     if (!validJob(merged)) return bad(res, 400, 'invalid cron schedule or command');
     if (req.body?.comment !== undefined) merged.comment = req.body.comment ? String(req.body.comment) : null;
-    db.prepare('UPDATE crons SET minute=?,hour=?,mday=?,month=?,wday=?,command=?,comment=? WHERE id=?')
-      .run(merged.minute, merged.hour, merged.mday, merged.month, merged.wday, merged.command, merged.comment ?? null, row.id);
+    if (req.body?.enabled !== undefined) merged.enabled = req.body.enabled ? 1 : 0;
+    db.prepare('UPDATE crons SET minute=?,hour=?,mday=?,month=?,wday=?,command=?,comment=?,enabled=? WHERE id=?')
+      .run(merged.minute, merged.hour, merged.mday, merged.month, merged.wday, merged.command, merged.comment ?? null, merged.enabled, row.id);
     syncCron(site);
     logEvent(db, req.user.id, 'cron.update', { site: site.domain, id: row.id });
     res.json({ ok: true });
@@ -234,7 +244,7 @@ export default function filesRouter({ db, system, config }) {
 
   // ---------- logs ----------
 
-  router.get('/sites/:id/logs', (req, res) => {
+  router.get('/sites/:id/logs', adminRequired, (req, res) => {
     const site = siteOf(req, res); if (!site) return;
     const type = String(req.query.type ?? 'access');
     if (!['access', 'error', 'fpm'].includes(type)) return bad(res, 400, 'bad type');
@@ -275,7 +285,8 @@ export default function filesRouter({ db, system, config }) {
       await system.exec('tar', ['-czf', out, '-C', path.dirname(staging), path.basename(staging)]);
       // ponytail: FakeSystem never runs tar, so out may not exist; listing/restore still validates by name.
       fs.rmSync(staging, { recursive: true, force: true });
-      const days = Number(db.prepare("SELECT value FROM settings WHERE key='backupRetention'").get()?.value ?? 7) || 7;
+      // ponytail: retention floor is 1 day (0/invalid -> 1); no "keep forever" knob yet.
+      const days = Math.max(1, Number(db.prepare("SELECT value FROM settings WHERE key='backupRetention'").get()?.value ?? 7));
       const cutoff = Date.now() - days * 86400000;
       for (const f of fs.readdirSync(bdir)) {
         if (!BACKUP_RE.test(f)) continue;
@@ -311,13 +322,25 @@ export default function filesRouter({ db, system, config }) {
     if (!BACKUP_RE.test(file)) return bad(res, 400, 'invalid backup name');
     const abs = jailed(res, home, path.join('backups', file)); if (!abs) return;
     if (!fs.existsSync(abs)) return bad(res, 404, 'backup not found');
-    await system.exec('tar', ['-xzf', abs, '-C', home]);
+    // validate member names before extraction: no absolute paths, no traversal
+    const lst = await system.exec('tar', ['-tzf', abs]);
+    if (lst.code !== 0) return bad(res, 400, 'invalid archive');
+    for (const line of lst.stdout.split('\n')) {
+      const m = line.trim();
+      if (!m) continue;
+      if (m.startsWith('/') || m.startsWith('../') || m.includes('/../') || /^[A-Za-z]:/.test(m)) {
+        return bad(res, 400, 'unsafe archive members');
+      }
+    }
+    // ponytail: symlink members can still point outside home (name list shows no type info).
+    // Upgrade path: extract to a staging dir, scan with real fs for symlinks, then rsync/cp into home.
+    await system.exec('tar', ['-xzf', abs, '-C', home, '--no-same-owner', '--no-same-permissions']);
     await system.exec('chown', ['-R', `${site.site_user}:${site.site_user}`, home]);
     logEvent(db, req.user.id, 'backup.restore', { site: site.domain, file });
     res.json({ ok: true });
   });
 
-  router.delete('/sites/:id/backups/:file', (req, res) => {
+  router.delete('/sites/:id/backups/:file', adminRequired, (req, res) => {
     const site = siteOf(req, res); if (!site) return;
     const file = String(req.params.file ?? '');
     if (!BACKUP_RE.test(file)) return bad(res, 400, 'invalid backup name');

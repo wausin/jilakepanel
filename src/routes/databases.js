@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { adminRequired } from '../auth.js';
 import { bad, logEvent, jail } from '../lib/util.js';
 
-const DB_EXT_RE = /\.(db|sqlite3?|sqlite)$/i;
+const DB_EXT_RE = /\.(db|sqlite3?)$/i;
 const MYSQL_SYS = new Set(['information_schema', 'mysql', 'performance_schema', 'sys']);
 
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -81,19 +81,23 @@ function discover(home) {
 function upload(req) {
   let file = null;
   const save = new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, v) => { if (!settled) { settled = true; fn(v); } };
     const bb = Busboy({ headers: req.headers, limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 5 } });
     bb.on('file', (name, stream, info) => {
       if (name !== 'file') { stream.resume(); return; }
-      const tmp = path.join(os.tmpdir(), `jlp-up-${crypto.randomBytes(8).toString('hex')}.${(info.filename || '').split('.').pop() || 'bin'}`);
+      const ext = path.extname(path.basename(String(info.filename))).toLowerCase();
+      const safeExt = (ext === '.sql' || ext === '.db' || ext === '.sqlite' || ext === '.sqlite3') ? ext : '.bin';
+      const tmp = path.join(os.tmpdir(), `jlp-up-${crypto.randomBytes(8).toString('hex')}${safeExt}`);
       file = { tmp, filename: info.filename || '' };
-      stream.on('limit', () => { fs.rmSync(tmp, { force: true }); reject(new HttpError(400, 'file exceeds 100MB limit')); stream.resume(); });
+      stream.on('limit', () => { fs.rmSync(tmp, { force: true }); done(reject, new HttpError(400, 'file exceeds 100MB limit')); stream.resume(); });
       const ws = fs.createWriteStream(tmp);
       stream.pipe(ws);
-      ws.on('error', reject);
-      ws.on('finish', () => resolve());
+      ws.on('error', (e) => done(reject, e));
+      ws.on('finish', () => done(resolve));
     });
-    bb.on('error', reject);
-    bb.on('close', () => { if (!file) reject(new HttpError(400, 'no file part')); });
+    bb.on('error', (e) => done(reject, e));
+    bb.on('close', () => { if (!file) done(reject, new HttpError(400, 'no file part')); });
     req.pipe(bb);
   });
   return { get file() { return file; }, save };
@@ -367,7 +371,7 @@ export default function databasesRouter({ db, system, config }) {
     if (METHOD_OF[key] !== req.method) return bad(res, 405, 'method not allowed');
     const handler = ({ delete: remove, tables, schema, rows, query, export: exportDb, import: importDb })[key];
     const run = () => Promise.resolve(handler(req, res)).catch(e => sendErr(res, e));
-    if (ADMIN_GATED.has(key) && req.user?.role !== 'admin') return adminRequired(req, res, run);
+    if (ADMIN_GATED.has(key)) return adminRequired(req, res, run);
     run();
   };
 

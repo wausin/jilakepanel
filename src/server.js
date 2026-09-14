@@ -14,6 +14,9 @@ export function createApp(overrides = {}) {
   const config = { ...baseConfig, ...overrides.config };
   const db = overrides.db ?? openDb(config.dataDir);
   const system = overrides.system ?? (process.env.JLP_DRYRUN === '1' ? new FakeSystem() : new System());
+  // periodic session sweep (once a minute, not per request)
+  const t = setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at<=?').run(Date.now()), 60000);
+  t.unref();
 
   const app = express();
   app.disable('x-powered-by');
@@ -26,7 +29,10 @@ export function createApp(overrides = {}) {
     const now = Date.now(), key = req.ip;
     const list = (hits.get(key) || []).filter(t => now - t < 60000);
     if (list.length >= 10) return bad(res, 429, 'too many attempts');
-    req.incHit = () => { list.push(now); hits.set(key, list); };
+    req.incHit = () => {
+      list.push(now); hits.set(key, list);
+      if (hits.size > 1000) for (const [k, v] of hits) if (!v.some(x => now - x < 60000)) hits.delete(k);
+    };
     next();
   }
 
@@ -81,7 +87,6 @@ export function createApp(overrides = {}) {
     res.json(db.prepare('SELECT * FROM events ORDER BY id DESC LIMIT 200').all());
   });
   authed.get('/system/stats', (req, res) => {
-    const df = system.isLinux() ? null : null;
     res.json({
       hostname: os.hostname(), platform: process.platform, uptime: os.uptime(),
       loadavg: os.loadavg(), memTotal: os.totalmem(), memFree: os.freemem(),
@@ -106,7 +111,10 @@ export function createApp(overrides = {}) {
   app.use('/api', api);
 
   app.use(express.static(config.publicDir));
-  app.use((req, res) => res.status(404).json({ error: 'not found' }));
+  app.use((req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'not found' });
+    res.status(404).type('text').send('not found');
+  });
   app.use((err, req, res, next) => {
     console.error(err);
     res.status(err.status || 500).json({ error: err.message || 'internal error' });
@@ -114,18 +122,11 @@ export function createApp(overrides = {}) {
   return app;
 }
 
-function require_hash(u) {
-  const { hashPassword } = globalThis.__jlp_auth;
-  return hashPassword(u);
-}
-
 // CLI: node src/server.js [--port 9443]
 import { pathToFileURL } from 'node:url';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const app = createApp();
   fs.mkdirSync(app.locals.config.dataDir, { recursive: true });
-  const { hashPassword } = await import('./auth.js');
-  globalThis.__jlp_auth = { hashPassword };
   const empty = app.locals.db.prepare('SELECT COUNT(*) c FROM users').get().c === 0;
   if (empty && baseConfig.adminUser && baseConfig.adminPassword) {
     createUser(app.locals.db, baseConfig.adminUser, baseConfig.adminPassword, 'admin');

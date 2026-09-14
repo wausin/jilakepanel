@@ -7,13 +7,14 @@ import { createApp } from '../src/server.js';
 import { FakeSystem } from '../src/system.js';
 import { createUser } from '../src/auth.js';
 
-let server, base, cookie;
+let server, base, cookie, appDb;
 
 before(async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jlp-test-'));
   const publicDir = path.join(dataDir, 'pub');
   fs.mkdirSync(publicDir, { recursive: true });
   const app = createApp({ config: { dataDir, publicDir }, system: new FakeSystem() });
+  appDb = app.locals.db;
   createUser(app.locals.db, 'admin', 'sup3rsecret', 'admin');
   createUser(app.locals.db, 'bob', 'sup3rsecret', 'editor');
   server = app.listen(0, '127.0.0.1');
@@ -73,6 +74,25 @@ test('create user + change password invalidates session', async () => {
   cookie = '';
   const re = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'carol', password: 'changed12345' }) });
   assert.equal(re.status, 200);
+});
+
+test('rate limit: 11th failed login is 429', async (t) => {
+  // dedicated app instance so the shared loopback bucket in `before` isn't poisoned
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jlp-rl-'));
+  const publicDir = path.join(dataDir, 'pub');
+  fs.mkdirSync(publicDir, { recursive: true });
+  const app2 = createApp({ config: { dataDir, publicDir }, system: new FakeSystem() });
+  createUser(app2.locals.db, 'ratelimited', 'sup3rsecret', 'editor');
+  const srv = app2.listen(0, '127.0.0.1');
+  await new Promise(r => srv.on('listening', r));
+  t.after(() => new Promise(r => srv.close(r)));
+  const b = `http://127.0.0.1:${srv.address().port}`;
+  const call = () => fetch(b + '/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'ratelimited', password: 'wrong1234' }),
+  });
+  for (let i = 0; i < 10; i++) assert.equal((await call()).status, 401, `attempt ${i}`);
+  assert.equal((await call()).status, 429);
 });
 
 test('settings + stats', async () => {

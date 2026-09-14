@@ -1,6 +1,6 @@
 [Unit]
 Description=JilakePanel
-After=network.target nginx.service php8.3-fpm.service mariadb.service
+After=network.target nginx.service mariadb.service
 
 [Service]
 Type=simple

@@ -147,6 +147,42 @@ test('PATCH disable removes symlink; enable recreates', async () => {
   assert.ok(system.calls.slice(before).some(c => c.file === 'ln' && c.args.includes(linkPath('example.com'))), 're-link');
 });
 
+test('PATCH phpVersion re-renders pool+vhost and reloads new fpm', async () => {
+  const pool83 = path.join(cfg.fpmPoolDir, '8.3', 'fpm', 'pool.d', 'example.conf');
+  const pool82 = path.join(cfg.fpmPoolDir, '8.2', 'fpm', 'pool.d', 'example.conf');
+  const filesBefore = system.files.size;
+  const callsBefore = system.calls.length;
+  const r = await api(`/api/sites/${siteId}`, { method: 'PATCH', body: JSON.stringify({ phpVersion: '8.2' }) });
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT php_version FROM sites WHERE id=?').get(siteId).php_version, '8.2');
+  assert.ok(system.files.get(pool82)?.includes('php8.2-fpm-example.sock') || system.files.get(pool82), 'new pool written');
+  assert.ok(system.calls.slice(callsBefore).some(c => c.file === 'systemctl' && c.args.join(' ') === 'reload php8.2-fpm'), 'reloadFpm 8.2');
+  assert.ok(system.calls.slice(callsBefore).some(c => c.file === 'rm' && c.args[1] === pool83), 'old pool removed');
+  assert.ok(system.files.size > filesBefore, 'vhost/pool re-written');
+});
+
+test('PATCH enabled toggle alone does not re-render vhost/pool files', async () => {
+  const filesBefore = system.files.size;
+  const r = await api(`/api/sites/${siteId}`, { method: 'PATCH', body: JSON.stringify({ enabled: 0 }) });
+  assert.equal(r.status, 200);
+  assert.equal(system.files.size, filesBefore, 'no writeFile during enabled-only toggle');
+  await api(`/api/sites/${siteId}`, { method: 'PATCH', body: JSON.stringify({ enabled: 1 }) });
+});
+
+test('GET vhost read returns current conf', async () => {
+  const r = await api(`/api/sites/${siteId}/vhost`);
+  assert.equal(r.status, 200);
+  assert.ok(r.body.content.includes('server_name example.com'), 'vhost content');
+});
+
+test('editor RBAC: PATCH and DELETE /sites/:id are 403', async () => {
+  cookie = '';
+  await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'bob', password: 'sup3rsecret' }) });
+  assert.equal((await api(`/api/sites/${siteId}`, { method: 'PATCH', body: JSON.stringify({ enabled: 0 }) })).status, 403);
+  assert.equal((await api(`/api/sites/${siteId}`, { method: 'DELETE', body: JSON.stringify({}) })).status, 403);
+  await login();
+});
+
 test('PUT vhost rollback on nginx -t failure', async () => {
   const p = vhostPath('example.com');
   const original = system.files.get(p);
@@ -163,7 +199,7 @@ test('tls: issue cert, vhost gets 443 block, GET tls parses expiry', async () =>
   assert.equal(badEmail.status, 400);
   const r = await api(`/api/sites/${siteId}/tls`, { method: 'POST', body: JSON.stringify({ email: 'admin@example.com' }) });
   assert.equal(r.status, 200);
-  assert.ok(hasCall('certbot', '--nginx', '-d', 'example.com'), 'certbot');
+  assert.ok(hasCall('certbot', '--nginx', '-d', 'example.com', '-d', 'www.example.com'), 'certbot with apex + www');
   assert.equal(db.prepare('SELECT tls FROM sites WHERE id=?').get(siteId).tls, 1);
   const vhost = system.files.get(vhostPath('example.com'));
   assert.ok(vhost.includes('ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;'), 'tls vhost');

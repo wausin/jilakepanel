@@ -6,12 +6,26 @@ export function logEvent(db, userId, action, details) {
     .run(userId ?? null, action, details ? JSON.stringify(details) : null);
 }
 
-// jail a user-supplied relative path inside root; throws on escape
+// jail a user-supplied relative path inside root; throws on escape (symlinks included)
 import path from 'node:path';
+import fs from 'node:fs';
 export function jail(root, rel) {
   const abs = path.resolve(root, String(rel ?? '.'));
   const normRoot = path.resolve(root);
   if (abs !== normRoot && !abs.startsWith(normRoot + path.sep)) throw new Error('path escape denied');
+  const ci = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
+  const rootReal = ci(fs.realpathSync(normRoot));
+  // target may not exist yet: realpath nearest existing ancestor, rejoin the remainder
+  let cur = abs, tail = [];
+  while (true) {
+    try { cur = fs.realpathSync(cur); break; }
+    catch (e) {
+      if (e.code !== 'ENOENT' || cur === path.dirname(cur)) throw e;
+      tail.unshift(path.basename(cur)); cur = path.dirname(cur);
+    }
+  }
+  const targetReal = ci(path.join(cur, ...tail));
+  if (targetReal !== rootReal && !targetReal.startsWith(rootReal + path.sep)) throw new Error('path escape denied');
   return abs;
 }
 

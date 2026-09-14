@@ -32,7 +32,7 @@ export function destroySession(db, token) {
 }
 export function getSessionUser(db, token) {
   if (!token) return null;
-  db.prepare('DELETE FROM sessions WHERE expires_at<=?').run(Date.now());
+  // expired sessions swept by the createApp interval, not per request
   return db.prepare(
     'SELECT u.id,u.username,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?'
   ).get(token, Date.now()) || null;

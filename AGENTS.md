@@ -61,7 +61,7 @@ POST /sites body: `{domain, type, siteUser, password, phpVersion?, nodeVersion?,
 Databases — SQLite (the differentiator):
 `GET /sites/:id/sqlite` (list *.db/*.sqlite under home) · `POST /sites/:id/sqlite {name}` (create file in ~/dbs) ·
 `GET /sites/:id/sqlite/:db/tables` · `GET /sites/:id/sqlite/:db/table/:t/rows?page&perPage&filterCol&filterQ` ·
-`GET /sites/:id/sqlite/:db/table/:t/schema` · `POST /sites/:id/sqlite/:db/query {sql, confirm}` (multi-stmt; SELECT returns rows; writes need `confirm:true`; reject PRAGMA/ATTACH/VACUUM-anything-dangerous) ·
+`GET /sites/:id/sqlite/:db/table/:t/schema` · `POST /sites/:id/sqlite/:db/query {sql, confirm}` (multi-stmt; SELECT returns rows (single result set for reads — node:sqlite prepare compiles first stmt only); writes need `confirm:true`; reject PRAGMA/ATTACH/VACUUM-anything-dangerous) ·
 `GET /sites/:id/sqlite/:db/export` (dump .sql) · `POST /sites/:id/sqlite/:db/import` (multipart .sql or .db) ·
 `DELETE /sites/:id/sqlite/:db`. `:db` param = path relative to site home, must pass `jail()`.
 
@@ -72,10 +72,12 @@ Files/cron/logs/backups:
 `GET /sites/:id/files?path=` (listing) · `GET|PUT /sites/:id/file?path=` (text content) ·
 `POST /sites/:id/files/upload?path=` (multipart via busboy) · `DELETE /sites/:id/file?path=` ·
 `POST /sites/:id/files/mkdir|rename` · `GET /sites/:id/download?path=` (tar.gz) ·
-`GET|POST /sites/:id/crons` + `PATCH|DELETE /sites/:id/crons/:cid` (synced to /etc/cron.d/jlp-<siteuser>) ·
-`GET /sites/:id/logs?type=access|error|fpm&lines=` (tail via `readlines`-style chunked read) ·
+`GET|POST /sites/:id/crons` + `PATCH|DELETE /sites/:id/crons/:cid` (PATCH accepts `enabled`; disabled jobs sync as `# disabled:` comment lines; synced to /etc/cron.d/jlp-<siteuser>) ·
+`GET /crons` (admin; optional `?siteId=`) ·
+`GET /sites/:id/logs?type=access|error|fpm&lines=` (admin; tail via `readlines`-style chunked read) ·
 `POST /sites/:id/backup` (tar files + sqlite copies + mysqldump → /home/$u/backups/YYMMDD-HHmm.tar.gz) ·
-`GET /sites/:id/backups` · `POST /sites/:id/restore {file}` · retention via setting `backupRetention` (days).
+`GET /sites/:id/backups` · `DELETE /sites/:id/backups/:file` (admin) · `POST /sites/:id/restore {file}` ·
+retention via setting `backupRetention` (days, minimum 1 — 0/invalid becomes 1).
 
 ## Non-negotiables
 
