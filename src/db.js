@@ -63,9 +63,18 @@ export function openDb(dataDir) {
   const db = new DatabaseSync(path.join(dataDir, 'panel.db'));
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(`CREATE TABLE IF NOT EXISTS _migrations(v INTEGER PRIMARY KEY)`);
-  const cur = db.prepare('SELECT MAX(v) AS v FROM _migrations').get()?.v ?? 0;
+  const applied = db.prepare('SELECT MAX(v) AS v FROM _migrations').get()?.v ?? 0;
   MIGRATIONS.forEach((sql, i) => {
-    if (i >= cur) { db.exec(sql); db.prepare('INSERT INTO _migrations VALUES(?)').run(i); }
+    if (i + 1 <= applied) return;
+    if (i === 1) {
+      // earlier release used 0-based versions and may have applied this ALTER
+      // without recording the correct version; keep it idempotent.
+      const has = db.prepare('PRAGMA table_info(crons)').all().some(c => c.name === 'enabled');
+      if (!has) db.exec(sql);
+    } else {
+      db.exec(sql);
+    }
+    db.prepare('INSERT INTO _migrations VALUES(?)').run(i + 1);
   });
   return db;
 }

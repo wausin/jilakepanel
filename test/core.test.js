@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createApp } from '../src/server.js';
+import { openDb } from '../src/db.js';
 import { FakeSystem } from '../src/system.js';
 import { createUser } from '../src/auth.js';
 
@@ -103,4 +104,20 @@ test('settings + stats', async () => {
   assert.equal(s.body.backupRetention, '7');
   const st = await api('/api/system/stats');
   assert.ok(st.body.hostname);
+});
+
+test('migrations are idempotent across reopen', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'jlp-mig-'));
+  try {
+    const db1 = openDb(d);
+    const cols = () => db1.prepare('PRAGMA table_info(crons)').all().map(c => c.name);
+    assert.ok(cols().includes('enabled'), 'crons.enabled exists after first open');
+    assert.deepEqual(db1.prepare('SELECT v FROM _migrations ORDER BY v').all().map(r => r.v), [1, 2]);
+    db1.close();
+    const db2 = openDb(d); // must NOT throw "duplicate column"
+    assert.ok(db2.prepare('PRAGMA table_info(crons)').all().some(c => c.name === 'enabled'));
+    db2.close();
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
 });
