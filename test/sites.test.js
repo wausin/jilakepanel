@@ -113,7 +113,7 @@ test('create php site: returns creating then ready, db row, system calls, vhost 
   assert.ok(pool && pool.includes('user = example') && pool.includes('pm.max_children = 5'), 'fpm pool conf');
 
   const index = system.files.get(path.join(row.docroot, 'index.php'));
-  assert.equal(index, '<?php\nphpinfo();\n', 'default php index written');
+  assert.ok(index && index.includes('under construction') && index.includes('example.com'), 'default maintenance index written');
 });
 
 test('validation: bad domain 400, missing phpVersion 400, duplicate 409', async () => {
