@@ -25,7 +25,8 @@ if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone "$REPO"
 cd "$DIR" && npm install --omit=dev
 
 if [ ! -f /etc/jilakepanel.env ]; then
-  PW=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+  # openssl not tr|head </dev/urandom — that pipeline SIGPIPEs and dies under pipefail
+  PW=$(openssl rand -hex 12)
   cat > /etc/jilakepanel.env <<EOF
 JLP_ADMIN_USER=admin
 JLP_ADMIN_PASSWORD=$PW
