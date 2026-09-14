@@ -10,15 +10,15 @@ cron, MySQL/MariaDB, file manager, logs, backups.
 ## Install (Ubuntu 22.04/24.04, root)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOU/jilakepanel/main/bin/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wausin/jilakepanel/main/bin/install.sh | bash
 ```
 
 Or manual:
 
 ```bash
 node --version                      # >= 22.13, else: apt install nodejs via NodeSource
-git clone <repo> /opt/jilakepanel && cd /opt/jilakepanel
-npm install --omit=dev
+git clone https://github.com/wausin/jilakepanel.git /opt/jilakepanel
+cd /opt/jilakepanel && npm install --omit=dev
 JLP_ADMIN_USER=admin JLP_ADMIN_PASSWORD='change-me-123' node src/server.js
 ```
 
@@ -36,15 +36,16 @@ in front via nginx `proxy_pass`).
 ```bash
 npm install
 JLP_DRYRUN=1 npm start    # FakeSystem: no real OS calls; UI + API + SQLite all real
-npm test                  # 38 tests, no root needed
+npm test                  # 47 tests, no root needed
 ```
 
-Windows/Linux/macOS for dev. Real nginx/PHP/user ops need Ubuntu/Debian.
+Windows PowerShell: `$env:JLP_DRYRUN='1'; npm start`. Linux/macOS/nginx/PHP/user ops need a real
+Ubuntu/Debian box — dev on Windows covers UI + API + panel DB + SQLite management only.
 
 ## Env
 
-`JLP_PORT` `JLP_HOST` `JLP_DATA_DIR` `JLP_SITES_DIR` `JLP_VHOST_DIR` `JLP_LOG_DIR`
-`JLP_ADMIN_USER` `JLP_ADMIN_PASSWORD` `JLP_DRYRUN=1`
+`JLP_PORT` `JLP_HOST` `JLP_DATA_DIR` `JLP_SITES_DIR` `JLP_VHOST_DIR` `JLP_VHOST_ENABLED_DIR`
+`JLP_FPM_POOL_DIR` `JLP_LOG_DIR` `JLP_ADMIN_USER` `JLP_ADMIN_PASSWORD` `JLP_DRYRUN=1`
 
 ## Docs
 

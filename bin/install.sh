@@ -3,7 +3,7 @@
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 
-REPO="${JLP_REPO:-https://github.com/YOU/jilakepanel.git}"
+REPO="${JLP_REPO:-https://github.com/wausin/jilakepanel.git}"
 DIR=/opt/jilakepanel
 
 # Node >= 22.13 (for node:sqlite)
@@ -24,7 +24,6 @@ apt-get install -y git nginx php8.3-fpm mariadb-server certbot python3-certbot-n
 if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone "$REPO" "$DIR"; fi
 cd "$DIR" && npm install --omit=dev
 
-UMASK_ARG=""
 if [ ! -f /etc/jilakepanel.env ]; then
   PW=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
   cat > /etc/jilakepanel.env <<EOF
